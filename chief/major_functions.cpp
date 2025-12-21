@@ -251,7 +251,93 @@ NTSTATUS mj_device_control(__in struct _DEVICE_OBJECT *DeviceObject, __inout str
 }
 
 NTSTATUS mj_power(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *Irp) {
-    return STATUS_SUCCESS;
+    // get the device extension
+    chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
+
+    // get the current stack location
+    PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(Irp);
+
+    // acquire the spinlock
+    spinlock_acquire(DeviceObject);
+
+    NTSTATUS status = STATUS_SUCCESS;
+
+    switch (stack->MinorFunction) {
+        case IRP_MN_WAIT_WAKE:
+        {
+                // TODO: check this out
+                // get the current power state
+                const POWER_STATE state = dev_ext->powerstate0;
+
+                // check if the device is already awake
+                const DEVICE_POWER_STATE device_wake = dev_ext->resource.DeviceWake;
+
+                // set powerstate2 to the device wake state
+                dev_ext->powerstate2.DeviceState = device_wake;
+
+                // check if we are already in the PowerDeviceD0 state
+                if (state.DeviceState != PowerDeviceD0 || dev_ext->powerstate2.DeviceState < state.DeviceState) {
+                    dev_ext->power_1_request_busy = true;
+
+                    // copy the current irp stack location to the next
+                    IoCopyCurrentIrpStackLocationToNext(Irp);
+
+                    // create a event
+                    KEVENT event;
+                    KeInitializeEvent(&event, NotificationEvent, false);
+
+                    // get the next irp stack location
+                    PIO_STACK_LOCATION stack = IoGetNextIrpStackLocation(Irp);
+
+                    stack->CompletionRoutine = signal_event_complete;
+                    stack->Context = &event;
+                    stack->Control = SL_INVOKE_ON_SUCCESS | SL_INVOKE_ON_ERROR | SL_INVOKE_ON_CANCEL;
+
+                    PoStartNextPowerIrp(Irp);
+                    status = PoCallDriver(dev_ext->attachedDeviceObject, Irp);
+
+                    // check if we need to wait on the request
+                    if (status == STATUS_PENDING) {
+                        // wait for the event to be signaled
+                        KeWaitForSingleObject(
+                            &event,
+                            Suspended,
+                            KernelMode,
+                            false,
+                            nullptr
+                        );
+
+                        // TODO: shouldnt we use the IoStatus.Status here?
+                        // status = Irp->IoStatus.Status;
+                    }
+
+                    // change the power state to the new value i guess
+                    change_power_state(DeviceObject, false);
+                    
+                    dev_ext->power_1_request_busy = false;
+                }
+                else {
+                    // set the status to invalid device state
+                    status = Irp->IoStatus.Status = STATUS_INVALID_DEVICE_STATE;
+
+                    // complete the irp
+                    IofCompleteRequest(Irp, IO_NO_INCREMENT);
+                }
+            }   
+            break;     
+        
+        case IRP_MN_POWER_SEQUENCE:
+        case IRP_MN_SET_POWER:
+        case IRP_MN_QUERY_POWER:
+        default:
+            break;
+    }
+
+    // release the spinlock
+    spinlock_release(DeviceObject);
+
+    // return the status
+    return status;
 }
 
 NTSTATUS mj_system_control(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *Irp) {
