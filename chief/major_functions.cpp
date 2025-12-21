@@ -309,6 +309,42 @@ NTSTATUS mj_create(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP
 }
 
 NTSTATUS mj_close(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *Irp) {
+    // acquire the spinlock
+    spinlock_acquire(DeviceObject);
+
+    // get the device extension
+    chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
+
+    // get the current file object in the irp
+    PFILE_OBJECT file = IoGetCurrentIrpStackLocation(Irp)->FileObject;
+
+    // check if we have a valid fs context
+    if (file->FsContext) {
+        // get the pipe from the filename
+        const ULONG pipe_index = get_pipe_from_unicode_str(DeviceObject, &file->FileName);
+
+        // check if the pipe index is valid
+        if (pipe_index < dev_ext->usb_interface_info->NumberOfPipes) {
+            // check if the pipe is allocated
+            if (dev_ext->allocated_pipes[pipe_index]) {
+                // mark the pipe as free
+                dev_ext->allocated_pipes[pipe_index] = false;
+
+                // decrement the interlocked value
+                InterlockedDecrement(&dev_ext->lock_count);
+            }
+        }
+    }
+
+    // release the spinlock
+    spinlock_release(DeviceObject);
+
+    Irp->IoStatus.Status = STATUS_SUCCESS;
+    Irp->IoStatus.Information = 0;
+
+    // complete the irp
+    IofCompleteRequest(Irp, IO_NO_INCREMENT);
+
     return STATUS_SUCCESS;
 }
 
