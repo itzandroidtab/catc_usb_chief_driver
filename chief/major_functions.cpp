@@ -326,9 +326,22 @@ NTSTATUS mj_power(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
             }   
             break;     
         
-        case IRP_MN_POWER_SEQUENCE:
         case IRP_MN_SET_POWER:
+
+        case IRP_MN_POWER_SEQUENCE:
         case IRP_MN_QUERY_POWER:
+            // copy the current irp stack location to the next
+            IoCopyCurrentIrpStackLocationToNext(Irp);
+
+            // mark we are ready for the next power irp
+            PoStartNextPowerIrp(Irp);
+            
+            // call the next driver
+            status = PoCallDriver(
+                ((chief_device_extension*)DeviceObject->DeviceExtension)->attachedDeviceObject,
+                Irp
+            );
+
         default:
             break;
     }
