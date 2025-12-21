@@ -89,7 +89,7 @@ NTSTATUS change_power_state_impl(_DEVICE_OBJECT* DeviceObject, const POWER_STATE
     chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
 
     // check if we are already in the requested state
-    if (dev_ext->powerstate0.DeviceState == state.DeviceState) {
+    if (dev_ext->current_power_state.DeviceState == state.DeviceState) {
         return STATUS_SUCCESS;
     }
 
@@ -141,8 +141,8 @@ NTSTATUS change_power_state(_DEVICE_OBJECT* DeviceObject, const bool a2) {
     // get the device extension
     chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
 
-    // check if we have a power irq pening or we have a power request busy
-    if (dev_ext->irp0 || dev_ext->power_request_busy) {
+    // check if we have a power irq pending or we have a power request busy
+    if (dev_ext->power_irp || dev_ext->power_request_busy) {
         return STATUS_SUCCESS;
     }
 
@@ -179,6 +179,80 @@ NTSTATUS change_power_state(_DEVICE_OBJECT* DeviceObject, const bool a2) {
 
     return change_power_state_impl(DeviceObject, state);
 }
+
+void power_request_complete(PDEVICE_OBJECT DeviceObject, UCHAR MinorFunction, POWER_STATE PowerState, PVOID Context, PIO_STATUS_BLOCK IoStatus) {
+    // TODO: why are they not using the DeviceObject parameter directly? No need
+    // for a context here
+    PDEVICE_OBJECT device_object = (PDEVICE_OBJECT)Context;
+
+    // get the device extension
+    chief_device_extension* dev_ext = (chief_device_extension*)device_object->DeviceExtension;
+
+    // copy the current irp stack location to the next
+    IoCopyCurrentIrpStackLocationToNext(dev_ext->power_irp);
+
+    // Mark we are done with the power request
+    PoStartNextPowerIrp(dev_ext->power_irp);
+
+    // call the driver
+    PoCallDriver(dev_ext->attachedDeviceObject, dev_ext->power_irp);
+
+    // clear the power irp pointer
+    // TODO: this was done below the spinlock release. I think
+    // it makes more sense to do it before releasing the spinlock
+    dev_ext->power_irp = nullptr;
+
+    // release the spinlock
+    spinlock_release(device_object);
+}
+
+NTSTATUS power_state_systemworking_complete(PDEVICE_OBJECT DeviceObject, PIRP Irp, PVOID Context) {
+    // TODO: why are they not using the DeviceObject parameter directly? No need
+    // for a context here
+    PDEVICE_OBJECT device_object = (PDEVICE_OBJECT)Context;
+
+    // get the device extension
+    chief_device_extension* dev_ext = (chief_device_extension*)device_object->DeviceExtension;
+
+    // check if we have a pending return
+    if (Irp->PendingReturned) {
+        // TODO: doesnt this mean we need to return STATUS_PENDING here?
+        IoGetCurrentIrpStackLocation(Irp)->Control |= SL_PENDING_RETURNED;
+    }
+
+    dev_ext->current_power_state.DeviceState = PowerDeviceD0;
+    Irp->IoStatus.Status = STATUS_SUCCESS;
+
+    // release the spinlock
+    spinlock_release(device_object);
+
+    // return success
+    return STATUS_SUCCESS;
+}
+
+bool update_power_state(_DEVICE_OBJECT* DeviceObject, const DEVICE_POWER_STATE state) {
+    // check if we are changing to a non D0 state
+    if (state != PowerDeviceD0) {
+        return true;
+    }
+
+    if (state > PowerDeviceD0) {
+        // get the device extension
+        chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
+
+        if (state <= PowerDeviceD2) {
+            dev_ext->current_power_state.DeviceState = state;
+        }
+        else if (state == PowerDeviceD3) {
+            // set the current power state to D3
+            dev_ext->current_power_state.DeviceState = PowerDeviceD3;
+        }
+    }
+
+    return false;
+}
+
+
 
 NTSTATUS mj_create(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *Irp) {
     // get the device extension
@@ -267,7 +341,7 @@ NTSTATUS mj_power(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
         {
                 // TODO: check this out
                 // get the current power state
-                const POWER_STATE state = dev_ext->powerstate0;
+                const POWER_STATE state = dev_ext->current_power_state;
 
                 // check if the device is already awake
                 const DEVICE_POWER_STATE device_wake = dev_ext->resource.DeviceWake;
@@ -327,6 +401,104 @@ NTSTATUS mj_power(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
             break;     
         
         case IRP_MN_SET_POWER:
+            // check if we have a valid power type
+            switch (stack->Parameters.Power.Type) {
+                case SystemPowerState:
+                    {
+                        // get the requested system power state
+                        const SYSTEM_POWER_STATE system_state = stack->Parameters.Power.State.SystemState;
+                        POWER_STATE device_state;
+                        device_state.DeviceState = PowerDeviceD0;
+                        
+                        // check if the system state is not working. If its not working we need
+                        // to map it to a device power state
+                        if (system_state != PowerSystemWorking) {
+                            if (dev_ext->power_1_request_busy) {
+                                device_state.DeviceState = dev_ext->resource.DeviceState[system_state];
+                            }
+                            else {
+                                device_state.DeviceState = PowerDeviceD3;
+                            }
+                        }
+
+                        if (device_state.DeviceState != dev_ext->current_power_state.DeviceState) {
+                            // store the current IRP
+                            dev_ext->power_irp = Irp;
+
+                            // do a power request. The callback will release the spinlock
+                            return PoRequestPowerIrp(
+                                dev_ext->physicalDeviceObject,
+                                IRP_MN_SET_POWER,
+                                device_state,
+                                power_request_complete,
+                                DeviceObject,
+                                nullptr
+                            );
+                        }
+                        else {
+                            // forward the irp to the next driver if we are not changing power states
+                            // TODO: is this needed. We are not changing power states. We could just
+                            // complete the irp right here. Figure out if this is needed
+
+                            // copy the current irp stack location to the next
+                            IoCopyCurrentIrpStackLocationToNext(Irp);
+
+                            // mark we are ready for the next power irp
+                            PoStartNextPowerIrp(Irp);
+                            
+                            // call the next driver
+                            status = PoCallDriver(
+                                ((chief_device_extension*)DeviceObject->DeviceExtension)->attachedDeviceObject,
+                                Irp
+                            );
+                        }
+                    }
+                    break;
+
+                case DevicePowerState:
+                    {
+                        // update the power state
+                        const bool u = update_power_state(DeviceObject, stack->Parameters.Power.State.DeviceState);
+
+                        // copy the current irp stack location to the next
+                        IoCopyCurrentIrpStackLocationToNext(Irp);
+
+                        // check if we need to add a new irp call
+                        if (u) {
+                            // get the next irp stack location
+                            PIO_STACK_LOCATION stack = IoGetNextIrpStackLocation(Irp);
+
+                            stack->CompletionRoutine = power_state_systemworking_complete;
+                            stack->Context = DeviceObject;
+                            stack->Control = SL_INVOKE_ON_SUCCESS | SL_INVOKE_ON_ERROR | SL_INVOKE_ON_CANCEL;
+                        }
+
+                        // mark we are ready for the next power irp
+                        PoStartNextPowerIrp(Irp);
+
+                        // call the next driver 
+                        status = PoCallDriver(
+                            ((chief_device_extension*)DeviceObject->DeviceExtension)->attachedDeviceObject,
+                            Irp
+                        );
+
+                        // check if we need to return early
+                        if (u) {
+                            // if we our callback is called we do not need to release the 
+                            // spinlock here as it will be released in the callback
+                            return status;
+                        }
+                    }    
+                    break;
+
+                default:
+                    // TODO: there was a bug here in the driver. The spinlock 
+                    // is was not being released. This would make it so the
+                    // driver will never be deleted
+                    status = STATUS_INVALID_PARAMETER_1;
+                    break;
+            }
+            break;
 
         case IRP_MN_POWER_SEQUENCE:
         case IRP_MN_QUERY_POWER:

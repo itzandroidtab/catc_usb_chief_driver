@@ -20,13 +20,13 @@ struct chief_transfer {
 struct chief_device_extension {
   PDEVICE_OBJECT attachedDeviceObject;
   PDEVICE_OBJECT physicalDeviceObject;
-  _POWER_STATE powerstate0;
+  _POWER_STATE current_power_state;
   USBD_CONFIGURATION_HANDLE usb_config_handle;
   _USB_CONFIGURATION_DESCRIPTOR *usb_config_desc;
   USB_DEVICE_DESCRIPTOR *usb_device_desc;
   PUSBD_INTERFACE_INFORMATION usb_interface_info;
   _DEVICE_CAPABILITIES resource;
-  _IRP *irp0;
+  _IRP *power_irp;
   _URB_BULK_OR_INTERRUPT_TRANSFER *bulk_or_interrupt0;
   _URB_BULK_OR_INTERRUPT_TRANSFER *bulk_or_interrupt1;
   int transferBufferLength;
