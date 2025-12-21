@@ -70,7 +70,7 @@ void set_power_complete(PDEVICE_OBJECT DeviceObject, UCHAR MinorFunction, POWER_
     // get the device extension
     chief_device_extension* dev_ext = (chief_device_extension*)device_object->DeviceExtension;
 
-    if (PowerState.SystemState < dev_ext->powerstate2.SystemState) {
+    if (PowerState.DeviceState < dev_ext->powerstate2.DeviceState) {
         // set the event to signal the power request is complete
         KeSetEvent(&dev_ext->event3, EVENT_INCREMENT, false);
     }
@@ -84,7 +84,7 @@ NTSTATUS change_power_state_impl(_DEVICE_OBJECT* DeviceObject, const POWER_STATE
     chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
 
     // check if we are already in the requested state
-    if (dev_ext->powerstate0.SystemState == state.DeviceState) {
+    if (dev_ext->powerstate0.DeviceState == state.DeviceState) {
         return STATUS_SUCCESS;
     }
 
@@ -107,7 +107,7 @@ NTSTATUS change_power_state_impl(_DEVICE_OBJECT* DeviceObject, const POWER_STATE
     // check if we have a pending status
     if (status == STATUS_PENDING) {
         // check if we need to wait for the request to complete
-        if (state.SystemState < dev_ext->powerstate2.SystemState) {
+        if (state.DeviceState < dev_ext->powerstate2.DeviceState) {
             KeWaitForSingleObject(
                 &dev_ext->event3,
                 Suspended,
@@ -158,15 +158,18 @@ NTSTATUS change_power_state(_DEVICE_OBJECT* DeviceObject, const bool a2) {
     // check if we are currently in a working, unspecified or 
     // hibernate state (we only pass here if we are in a 
     // sleeping1/2/3 or shutdown state)
-    if (state.SystemState == PowerSystemWorking || 
-        state.SystemState == PowerSystemUnspecified ||
-        state.SystemState == PowerSystemHibernate) 
+    if (state.DeviceState == PowerDeviceD0 || 
+        state.DeviceState == PowerDeviceUnspecified ||
+        state.DeviceState >= PowerDeviceMaximum) 
     {
         return STATUS_SUCCESS;
     } 
 
     if (!a2) {
-        return change_power_state_impl(DeviceObject, {PowerSystemWorking});
+        POWER_STATE ps = {};
+        ps.DeviceState = PowerDeviceD0;
+
+        return change_power_state_impl(DeviceObject, ps);
     }
 
     return change_power_state_impl(DeviceObject, state);
