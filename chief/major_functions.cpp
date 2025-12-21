@@ -4,6 +4,11 @@
 #include "spinlock.hpp"
 #include "device_extension.hpp"
 
+NTSTATUS signal_event_complete(_DEVICE_OBJECT *DeviceObject, _IRP *Irp, void* Event) {
+    KeSetEvent((PRKEVENT)Event, EVENT_INCREMENT, false);
+    return STATUS_MORE_PROCESSING_REQUIRED;
+}
+
 static bool delete_is_not_pending(__in struct _DEVICE_OBJECT *DeviceObject) {
     chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
     

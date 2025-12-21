@@ -14,11 +14,6 @@ static void driver_unload(__in struct _DRIVER_OBJECT *DriverObject) {
     return;
 }
 
-static NTSTATUS signal_event_complete(_DEVICE_OBJECT *DeviceObject, _IRP *Irp, void* Event) {
-    KeSetEvent((PRKEVENT)Event, EVENT_INCREMENT, false);
-    return STATUS_MORE_PROCESSING_REQUIRED;
-}
-
 NTSTATUS add_chief_device(PDRIVER_OBJECT driver_object, PDEVICE_OBJECT* device_object) {
     // the device and symbolic link names
     constexpr static wchar_t device_name[] = L"Device\\ChiefUSB";

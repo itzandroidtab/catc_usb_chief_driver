@@ -75,3 +75,13 @@ NTSTATUS mj_system_control(__in struct _DEVICE_OBJECT *DeviceObject, __inout str
  * @return NTSTATUS 
  */
 NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *Irp);
+
+/**
+ * @brief Helper function to signal an event when an IRP is complete
+ * 
+ * @param DeviceObject 
+ * @param Irp 
+ * @param Event 
+ * @return NTSTATUS 
+ */
+NTSTATUS signal_event_complete(_DEVICE_OBJECT *DeviceObject, _IRP *Irp, void* Event);
