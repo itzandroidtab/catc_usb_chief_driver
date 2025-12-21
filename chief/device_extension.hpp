@@ -45,7 +45,7 @@ struct chief_device_extension {
   bool is_removing;
   bool someflag_22;
   bool has_config_desc;
-  bool someflag_24;
+  bool power_1_request_busy;
   bool power_request_busy;
   bool padding[2];
 
