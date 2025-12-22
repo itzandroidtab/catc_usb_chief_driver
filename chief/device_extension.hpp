@@ -13,6 +13,20 @@ struct chief_transfer {
   PMDL targetMdl;
 };
 
+struct usb_chief_vendor_request {
+    unsigned short Reqeuest;
+    unsigned short value;
+    unsigned short index;
+    unsigned short length;
+    void *data;
+};
+
+struct usb_chief_payload {
+  int field0;
+  int field1;
+  USBD_PIPE_HANDLE *pipe;
+};
+
 /**
  * @brief Device extension structure
  * 
@@ -27,9 +41,9 @@ struct chief_device_extension {
   PUSBD_INTERFACE_INFORMATION usb_interface_info;
   _DEVICE_CAPABILITIES resource;
   _IRP *power_irp;
-  _URB_BULK_OR_INTERRUPT_TRANSFER *bulk_or_interrupt0;
-  _URB_BULK_OR_INTERRUPT_TRANSFER *bulk_or_interrupt1;
-  int transferBufferLength;
+  _IRP *multi_transfer_irp;
+  _URB_BULK_OR_INTERRUPT_TRANSFER *bulk_interrupt_request;
+  int total_transfers;
   _KEVENT event0;
   _KEVENT event1;
   _KEVENT event2;
@@ -55,10 +69,3 @@ struct chief_device_extension {
   KSPIN_LOCK spinlock1;
 };
 
-struct usb_chief_vendor_request {
-    unsigned short Reqeuest;
-    unsigned short value;
-    unsigned short index;
-    unsigned short length;
-    void *data;
-};
