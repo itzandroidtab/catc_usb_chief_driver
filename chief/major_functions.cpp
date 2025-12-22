@@ -4,6 +4,10 @@
 #include "spinlock.hpp"
 #include "device_extension.hpp"
 
+extern "C" {
+    #include <usbdlib.h>
+}
+
 NTSTATUS signal_event_complete(_DEVICE_OBJECT *DeviceObject, _IRP *Irp, void* Event) {
     KeSetEvent((PRKEVENT)Event, EVENT_INCREMENT, false);
     return STATUS_MORE_PROCESSING_REQUIRED;
@@ -252,7 +256,217 @@ bool update_power_state(_DEVICE_OBJECT* DeviceObject, const DEVICE_POWER_STATE s
     return false;
 }
 
+NTSTATUS usb_send_urb(_DEVICE_OBJECT* DeviceObject, void* Urb) {
+    // get the device extension
+    chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
 
+    // create a event
+    KEVENT event;
+    KeInitializeEvent(&event, NotificationEvent, false);
+
+    struct _IO_STATUS_BLOCK IoStatusBlock = {};
+
+    PIRP irp = IoBuildDeviceIoControlRequest(
+        CTL_CODE(FILE_DEVICE_USB, 0x0, METHOD_NEITHER, FILE_ANY_ACCESS),
+        dev_ext->attachedDeviceObject,
+        0,
+        0,
+        0,
+        0,
+        TRUE,
+        &event,
+        &IoStatusBlock
+    );
+
+    if (!irp) {
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+
+    // get the current stack location and store the context
+    IoGetCurrentIrpStackLocation(irp)->Parameters.Others.Argument1 = Urb;
+
+    NTSTATUS status = IofCallDriver(dev_ext->attachedDeviceObject, irp);
+
+    // check if we have a pending status
+    if (status == STATUS_PENDING) {
+        // wait for the event to be signaled
+        KeWaitForSingleObject(
+            &event,
+            Suspended,
+            KernelMode,
+            false,
+            nullptr
+        );
+
+        status = IoStatusBlock.Status;
+    }
+
+    return status;
+}
+
+NTSTATUS usb_send_receive_vendor_request(_DEVICE_OBJECT* DeviceObject, usb_chief_vendor_request* Request, bool receive) {
+    constexpr static unsigned int size = 0x50;
+
+    _URB_CONTROL_VENDOR_OR_CLASS_REQUEST * usb = (_URB_CONTROL_VENDOR_OR_CLASS_REQUEST*)ExAllocatePoolWithTag(
+        NonPagedPool, size, 0x206D6457u
+    );
+
+    // check if we got memory
+    if (!usb) {
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+
+    void* buffer = nullptr;
+
+    // check if we need to allocate memeory
+    if (Request->length) {
+        buffer = ExAllocatePoolWithTag(NonPagedPool, Request->length, 0x206D6457u);
+
+        if (!buffer) {
+            // TODO: this should free the usb variable before exiting
+            return STATUS_INSUFFICIENT_RESOURCES;
+        }
+
+        memcpy(buffer, Request->data, Request->length);
+    }
+
+    // initialize the urb
+    usb->Hdr.Function = URB_FUNCTION_VENDOR_DEVICE;
+    usb->Hdr.Length = size;
+    usb->TransferBufferLength = Request->length;
+    usb->TransferBufferMDL = 0;
+    usb->TransferBuffer = buffer;
+    usb->RequestTypeReservedBits = (
+        ((receive ? BMREQUEST_DEVICE_TO_HOST : BMREQUEST_HOST_TO_DEVICE) << 7) |
+        (BMREQUEST_VENDOR << 5) | BMREQUEST_TO_DEVICE
+    );
+    usb->Request = Request->Reqeuest & 0xff;
+    usb->Value = Request->value;
+    usb->Index = Request->index;
+    usb->TransferFlags = receive ? 3 : 0;
+    usb->UrbLink = 0;
+
+    // send the urb
+    NTSTATUS status = usb_send_urb(DeviceObject, (_URB*)usb);
+
+    // check if we need to copy data back
+    if (NT_SUCCESS(status) && receive && buffer) {
+        // copy the data back to the request structure
+        memcpy(Request->data, buffer, usb->TransferBufferLength);
+    }
+
+    if (buffer) {
+        ExFreePool(buffer);
+    }
+
+    ExFreePool(usb);
+
+    return status;
+}
+
+NTSTATUS usb_set_alternate_setting(_DEVICE_OBJECT *deviceObject, PUSB_CONFIGURATION_DESCRIPTOR ConfigurationDescriptor, unsigned char AlternateSetting) {
+    // check if we have a valid alternate setting
+    if (AlternateSetting >= 2) {
+        // TODO: invalid parameter sounds better here as error
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+
+    // get the device extension
+    chief_device_extension* dev_ext = (chief_device_extension*)deviceObject->DeviceExtension;
+
+    // switch to the alternate setting
+    _USB_INTERFACE_DESCRIPTOR *descriptor = USBD_ParseConfigurationDescriptorEx(
+        ConfigurationDescriptor,
+        ConfigurationDescriptor,
+        0,
+        AlternateSetting,
+        -1,
+        -1,
+        -1
+    );
+
+    if (!descriptor) {
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+
+    struct _USBD_INTERFACE_LIST_ENTRY InterfaceList;
+    InterfaceList.InterfaceDescriptor = nullptr;
+    InterfaceList.Interface = 0;
+
+    // create the urb
+    PURB urb = USBD_CreateConfigurationRequestEx(
+        ConfigurationDescriptor,
+        &InterfaceList
+    );
+
+    if (!urb) {
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+
+    // free the allocated pipes if we have any
+    if (dev_ext->allocated_pipes) {
+        ExFreePool(dev_ext->allocated_pipes);
+    }
+
+    // allocate new memory for the allocated pipes
+    dev_ext->allocated_pipes = (bool*)ExAllocatePoolWithTag(
+        NonPagedPool,
+        sizeof(bool) * InterfaceList.Interface->NumberOfPipes,
+        0x206D6457u
+    );
+
+    // check if we got memory
+    if (!dev_ext->allocated_pipes) {
+        // free the urb before we exit
+        ExFreePool(urb);
+
+        // return we have an error
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+
+    // zero the allocated pipes
+    memset(dev_ext->allocated_pipes, 0x00, sizeof(bool) * InterfaceList.Interface->NumberOfPipes);
+
+    // set the maximum transfer size for all pipes to the max_length
+    for (ULONG i = 0; i < InterfaceList.Interface->NumberOfPipes; i++) {
+        InterfaceList.Interface->Pipes[i].MaximumTransferSize = dev_ext->max_length;
+    }
+
+    // set the urb
+    urb->UrbHeader.Function = URB_FUNCTION_SELECT_CONFIGURATION;
+    urb->UrbHeader.Length = InterfaceList.Interface->Length;
+    urb->UrbSelectInterface.ConfigurationHandle = ConfigurationDescriptor;
+
+    // send the urb
+    NTSTATUS status = usb_send_urb(deviceObject, urb);
+
+    // set the usb config handle
+    // TODO: not sure if this changes with the usb_send_urb call
+    dev_ext->usb_config_handle = urb->UrbSelectConfiguration.ConfigurationHandle;
+
+    // check if we need to update the interface information
+    if (NT_SUCCESS(status)) {
+        if (dev_ext->usb_interface_info) {
+            ExFreePool(dev_ext->usb_interface_info);
+        }
+
+        // allocate new memory for the usb interface info
+        dev_ext->usb_interface_info = (PUSBD_INTERFACE_INFORMATION)ExAllocatePoolWithTag(
+            NonPagedPool,
+            InterfaceList.Interface->Length,
+            0x206D6457u
+        );
+
+        if (dev_ext->usb_interface_info) {
+            // copy the interface info
+            memcpy(dev_ext->usb_interface_info, InterfaceList.Interface, InterfaceList.Interface->Length);
+        }
+    }
+    
+    ExFreePool(urb);
+
+    return STATUS_SUCCESS;
+}
 
 NTSTATUS mj_create(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *Irp) {
     // get the device extension
@@ -357,7 +571,84 @@ NTSTATUS mj_write(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
 }
 
 NTSTATUS mj_device_control(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *Irp) {
-    return STATUS_SUCCESS;
+    // acquire the spinlock
+    spinlock_acquire(DeviceObject);
+
+    // get the device extension
+    chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
+
+    // return status
+    NTSTATUS status = STATUS_SUCCESS;
+
+    // check if we have a delete pending
+    if (!delete_is_not_pending(DeviceObject)) {
+        // set the status to delete pending
+        status = STATUS_DELETE_PENDING;
+        Irp->IoStatus.Information = 0;
+    }
+    else {
+        // get the current irp stack location
+        PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(Irp);
+
+        // get the values from the stack
+        ULONG_PTR buffer_length = stack->Parameters.DeviceIoControl.OutputBufferLength;
+        const ULONG io_control_code = stack->Parameters.DeviceIoControl.IoControlCode;
+        usb_chief_vendor_request* vendor_request = (usb_chief_vendor_request*)Irp->AssociatedIrp.SystemBuffer;
+
+        // check the io control code
+        switch (io_control_code) {
+            case CTL_CODE(FILE_DEVICE_USB, 0, METHOD_BUFFERED, FILE_ANY_ACCESS): // 0x220000
+                status = usb_send_receive_vendor_request(DeviceObject, vendor_request, false);
+                break;
+            case CTL_CODE(FILE_DEVICE_USB, 1, METHOD_BUFFERED, FILE_ANY_ACCESS): // 0x220004
+                status = usb_send_receive_vendor_request(DeviceObject, vendor_request, true);
+
+                // check the status for a success
+                if (!NT_SUCCESS(status)) {
+                    Irp->IoStatus.Information = 0;
+                    status = STATUS_DEVICE_DATA_ERROR;
+                }
+                else {
+                    // set the information to the buffer length
+                    Irp->IoStatus.Information = buffer_length;
+                }
+                break;
+            case CTL_CODE(FILE_DEVICE_USB, 2, METHOD_BUFFERED, FILE_ANY_ACCESS): // 0x220008
+                status = usb_set_alternate_setting(DeviceObject, dev_ext->usb_config_desc, vendor_request->Reqeuest & 0xff);
+                break;
+            case CTL_CODE(FILE_DEVICE_USB, 3, METHOD_BUFFERED, FILE_ANY_ACCESS): // 0x22000c
+                if (dev_ext->usb_device_desc) {
+                    // copy the bcdUSB value to the vendor request
+                    vendor_request->Reqeuest = dev_ext->usb_device_desc->bcdUSB;
+
+                    // set the length to 2 bytes
+                    Irp->IoStatus.Information = 2;
+
+                    // set the status to success
+                    status = STATUS_SUCCESS;
+                }
+                else {
+                    // set the status to device data error
+                    status = STATUS_DEVICE_DATA_ERROR;
+                }
+                break;
+            default:
+                // all other requests are invalid
+                status = STATUS_INVALID_PARAMETER;
+                break;
+        }
+    }
+
+    // set the irp status based on the status
+    Irp->IoStatus.Status = status;
+
+    // complete the irp
+    IofCompleteRequest(Irp, IO_NO_INCREMENT);
+
+    // release the spinlock
+    spinlock_release(DeviceObject);
+
+    return status;
 }
 
 NTSTATUS mj_power(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *Irp) {

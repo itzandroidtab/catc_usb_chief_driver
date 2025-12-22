@@ -54,3 +54,11 @@ struct chief_device_extension {
   int max_length;
   KSPIN_LOCK spinlock1;
 };
+
+struct usb_chief_vendor_request {
+    unsigned short Reqeuest;
+    unsigned short value;
+    unsigned short index;
+    unsigned short length;
+    void *data;
+};

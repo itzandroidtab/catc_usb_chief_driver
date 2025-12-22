@@ -65,7 +65,7 @@ target_compile_options(usb_chief PRIVATE
 )
 
 # Link kernel libraries
-target_link_libraries(usb_chief ntoskrnl.lib hal.lib)
+target_link_libraries(usb_chief ntoskrnl.lib hal.lib usbd.lib)
 
 # Driver-specific linker options
 target_link_options(usb_chief PRIVATE
