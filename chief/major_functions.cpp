@@ -242,7 +242,7 @@ bool update_power_state(_DEVICE_OBJECT* DeviceObject, const DEVICE_POWER_STATE s
     return false;
 }
 
-NTSTATUS usb_send_urb(_DEVICE_OBJECT* DeviceObject, void* Urb) {
+NTSTATUS usb_send_urb(_DEVICE_OBJECT* DeviceObject, PURB Urb) {
     // get the device extension
     chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
 
@@ -333,7 +333,7 @@ NTSTATUS usb_send_receive_vendor_request(_DEVICE_OBJECT* DeviceObject, usb_chief
     usb->UrbLink = 0;
 
     // send the urb
-    NTSTATUS status = usb_send_urb(DeviceObject, (_URB*)usb);
+    NTSTATUS status = usb_send_urb(DeviceObject, (PURB)usb);
 
     // check if we need to copy data back
     if (NT_SUCCESS(status) && receive && buffer) {
@@ -424,7 +424,7 @@ NTSTATUS usb_set_alternate_setting(_DEVICE_OBJECT *deviceObject, PUSB_CONFIGURAT
     urb->UrbSelectInterface.ConfigurationHandle = ConfigurationDescriptor;
 
     // send the urb
-    NTSTATUS status = usb_send_urb(deviceObject, urb);
+    NTSTATUS status = usb_send_urb(deviceObject, (PURB)urb);
 
     // set the usb config handle
     // TODO: not sure if this changes with the usb_send_urb call
@@ -758,7 +758,7 @@ NTSTATUS usb_sync_reset_pipe_clear_stall(__in struct _DEVICE_OBJECT *DeviceObjec
     request->PipeHandle = Pipe->PipeHandle;
 
     // send the urb
-    NTSTATUS status = usb_send_urb(DeviceObject, request);
+    NTSTATUS status = usb_send_urb(DeviceObject, (PURB)request);
 
     ExFreePool(request);
 
