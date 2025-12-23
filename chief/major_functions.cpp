@@ -765,7 +765,48 @@ NTSTATUS usb_sync_reset_pipe_clear_stall(__in struct _DEVICE_OBJECT *DeviceObjec
     return status;
 }
 
+static void stop_device(_DEVICE_OBJECT* DeviceObject) {
+    // get the device extension
+    chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
 
+    // check if we have any payload
+    if (!dev_ext->payload) {
+        return;
+    }
+
+    chief_transfer* transfer = dev_ext->payload;
+
+    // check if we have any irps to cancel
+    if (!transfer->irp) {
+        return;
+    }
+
+    // cancel all pending irps
+    bool last_result = false;
+    int count = 0;
+
+    // iterate through all irps and cancel them
+    for (PIRP* irp = &transfer->irp; *irp; irp++, count++) {
+        // cancel the irp
+        last_result = IoCancelIrp(*irp);
+        
+        // check for failure
+        if (!last_result) {
+            break;
+        }
+    }
+
+    // wait for all the cancelled irps to complete
+    if (count && last_result) {
+        KeWaitForSingleObject(
+            &dev_ext->event1,
+            Suspended,
+            KernelMode,
+            false,
+            nullptr
+        );
+    }
+}
 
 NTSTATUS mj_read_write_impl(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *Irp, bool read) {
     // clear the information field
