@@ -864,6 +864,48 @@ static NTSTATUS usb_pipe_abort(_DEVICE_OBJECT* DeviceObject) {
     return status;
 }
 
+static NTSTATUS usb_clear_config_desc(_DEVICE_OBJECT* DeviceObject) {
+    constexpr static unsigned int size = 0x3c;
+
+    // get the device extension
+    chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
+
+    // allocate memory for the URB
+    _URB_SELECT_CONFIGURATION* urb = (_URB_SELECT_CONFIGURATION*)ExAllocatePoolWithTag(
+        NonPagedPool,
+        0x3c,
+        0x206D6457u
+    );
+
+    NTSTATUS status;
+
+    if (!urb) {
+        status = STATUS_INSUFFICIENT_RESOURCES;
+    }
+    else {
+        // initialize the URB to deselect configuration (set to NULL)
+        urb->Hdr.Function = URB_FUNCTION_SELECT_CONFIGURATION;
+        urb->Hdr.Length = 0x3c;
+        urb->ConfigurationDescriptor = nullptr;
+
+        // send the urb
+        status = usb_send_urb(DeviceObject, (PURB)urb);
+
+        // free the URB
+        ExFreePool(urb);
+    }
+
+    // if successful, mark that we no longer have a config descriptor
+    if (NT_SUCCESS(status)) {
+        dev_ext->has_config_desc = false;
+    }
+
+    // clear the someflag_22 flag. TODO: find out what this is
+    dev_ext->someflag_22 = false;
+
+    return status;
+}
+
 static NTSTATUS usb_cleanup_memory(_DEVICE_OBJECT* DeviceObject) {
     // get the device extension
     chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
