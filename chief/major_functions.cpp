@@ -864,6 +864,77 @@ static NTSTATUS usb_pipe_abort(_DEVICE_OBJECT* DeviceObject) {
     return status;
 }
 
+static NTSTATUS usb_get_configuration_desc(_DEVICE_OBJECT* DeviceObject) {
+    // get the device extension
+    chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
+
+    // allocate memory for the URB
+    _URB_CONTROL_DESCRIPTOR_REQUEST* urb = (_URB_CONTROL_DESCRIPTOR_REQUEST*)ExAllocatePoolWithTag(
+        NonPagedPool,
+        sizeof(_URB_CONTROL_DESCRIPTOR_REQUEST),
+        0x206D6457u
+    );
+
+    if (!urb) {
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+
+    // clear the URB memory
+    memset(urb, 0x00, sizeof(_URB_CONTROL_DESCRIPTOR_REQUEST));
+
+    // start with an initial buffer size of 521 bytes
+    // TODO: why 521? The actual descriptor is 55 bytes long if 
+    // I check with a USB sniffer
+    ULONG buffer_size = 521;
+
+    while (true) {
+        // allocate memory for the configuration descriptor
+        PUSB_CONFIGURATION_DESCRIPTOR descriptor = (PUSB_CONFIGURATION_DESCRIPTOR)ExAllocatePoolWithTag(
+            NonPagedPool,
+            buffer_size,
+            0x206D6457u
+        );
+
+        dev_ext->usb_config_desc = descriptor;
+
+        if (!descriptor) {
+            ExFreePool(urb);
+            return STATUS_INSUFFICIENT_RESOURCES;
+        }
+
+        // initialize the URB for getting configuration descriptor
+        urb->Hdr.Function = URB_FUNCTION_GET_DESCRIPTOR_FROM_DEVICE;
+        urb->Hdr.Length = sizeof(_URB_CONTROL_DESCRIPTOR_REQUEST);
+        urb->TransferBufferLength = buffer_size;
+        urb->TransferBufferMDL = nullptr;
+        urb->TransferBuffer = dev_ext->usb_config_desc;
+        urb->DescriptorType = USB_CONFIGURATION_DESCRIPTOR_TYPE;
+        urb->Index = 0;
+        urb->LanguageId = 0;
+        urb->UrbLink = nullptr;
+
+        // send the URB
+        usb_send_urb(DeviceObject, (PURB)urb);
+
+        // check if we got the complete descriptor
+        // if TransferBufferLength is 0 or the total length fits in our buffer, we're done
+        if (!urb->TransferBufferLength || dev_ext->usb_config_desc->wTotalLength <= buffer_size) {
+            break;
+        }
+
+        // we need a larger buffer, free the current one and try again
+        buffer_size = dev_ext->usb_config_desc->wTotalLength;
+        ExFreePool(dev_ext->usb_config_desc);
+        dev_ext->usb_config_desc = nullptr;
+    }
+
+    // free the URB
+    ExFreePool(urb);
+
+    // set the alternate setting to 0
+    return usb_set_alternate_setting(DeviceObject, dev_ext->usb_config_desc, 0);
+}
+
 static NTSTATUS usb_clear_config_desc(_DEVICE_OBJECT* DeviceObject) {
     constexpr static unsigned int size = 0x3c;
 
