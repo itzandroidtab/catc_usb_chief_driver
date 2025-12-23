@@ -14,12 +14,6 @@ struct usb_chief_vendor_request {
     void *data;
 };
 
-struct usb_chief_payload {
-  int field0;
-  int field1;
-  USBD_PIPE_HANDLE *pipe;
-};
-
 /**
  * @brief Device extension structure
  * 
