@@ -219,10 +219,13 @@ NTSTATUS power_state_systemworking_complete(PDEVICE_OBJECT DeviceObject, PIRP Ir
 
 bool update_power_state(_DEVICE_OBJECT* DeviceObject, const DEVICE_POWER_STATE state) {
     // check if we are changing to a non D0 state
-    if (state != PowerDeviceD0) {
+    if (state == PowerDeviceD0) {
         return true;
     }
-
+    
+    // TODO: this doesnt do anything. It copies the state to the 
+    // current_power_state but it does extra checking that seems 
+    // useless
     if (state > PowerDeviceD0) {
         // get the device extension
         chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
