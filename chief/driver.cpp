@@ -60,7 +60,7 @@ NTSTATUS add_chief_device(PDRIVER_OBJECT driver_object, PDEVICE_OBJECT* device_o
     KeInitializeEvent(&dev_ext->power_complete_event, NotificationEvent, FALSE);
 
     // initialize spinlocks
-    KeInitializeSpinLock(&dev_ext->spinlock0);
+    KeInitializeSpinLock(&dev_ext->device_lock);
     KeInitializeSpinLock(&dev_ext->spinlock1);
 
     // reset the allocated pipes and usb_interface_info

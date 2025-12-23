@@ -7,13 +7,13 @@ void spinlock_acquire(PDEVICE_OBJECT DeviceObject) {
     
     // acquire the spinlock
     KIRQL irql;
-    KeAcquireSpinLock(&dev_ext->spinlock0, &irql);
+    KeAcquireSpinLock(&dev_ext->device_lock, &irql);
 
     // increment the lock count
     InterlockedIncrement(&dev_ext->lock_count);
 
     // release the spinlock
-    KeReleaseSpinLock(&dev_ext->spinlock0, irql);
+    KeReleaseSpinLock(&dev_ext->device_lock, irql);
 }
 
 LONG spinlock_release(PDEVICE_OBJECT DeviceObject) {
@@ -22,7 +22,7 @@ LONG spinlock_release(PDEVICE_OBJECT DeviceObject) {
 
     // acquire the spinlock
     KIRQL irql;
-    KeAcquireSpinLock(&dev_ext->spinlock0, &irql);
+    KeAcquireSpinLock(&dev_ext->device_lock, &irql);
     
     // decrement the lock count
     LONG new_count = InterlockedDecrement(&dev_ext->lock_count);
@@ -41,7 +41,7 @@ LONG spinlock_release(PDEVICE_OBJECT DeviceObject) {
     }
 
     // release the spinlock
-    KeReleaseSpinLock(&dev_ext->spinlock0, irql);
+    KeReleaseSpinLock(&dev_ext->device_lock, irql);
 
     // return the new count
     return new_count;
