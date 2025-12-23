@@ -708,14 +708,18 @@ NTSTATUS usb_bulk_or_interrupt_transfer_complete_1(PDEVICE_OBJECT DeviceObject, 
     chief_device_extension* dev_ext = (chief_device_extension*)transfer->deviceObject->DeviceExtension;
 
     // acquire the spinlock
-    spinlock_acquire(DeviceObject);
-
-    Irp->IoStatus.Status = STATUS_SUCCESS;
-    Irp->IoStatus.Information = transfer->transfer->TransferBufferLength;
-    dev_ext->event0.Header.Lock += transfer->transfer->TransferBufferLength;
+    KIRQL irql;
+    KeAcquireSpinLock(&dev_ext->spinlock1, &irql);
 
     // decrease the total transfers count
     dev_ext->total_transfers--;
+
+    // release the spinlock
+    spinlock_release(DeviceObject);
+    
+    // TODO: why is this changing something in the event0 header lock?
+    dev_ext->event0.Header.Lock += transfer->transfer->TransferBufferLength;
+    Irp->IoStatus.Information = transfer->transfer->TransferBufferLength;
 
     // free the irp
     IoFreeIrp(transfer->irp);
@@ -744,10 +748,10 @@ NTSTATUS usb_bulk_or_interrupt_transfer_complete_1(PDEVICE_OBJECT DeviceObject, 
         KeSetEvent(&dev_ext->event1, EVENT_INCREMENT, false);
     }
 
-    ExFreePool(transfer);
+    ExFreePool(transfer->transfer);
 
     // release the spinlock
-    spinlock_release(DeviceObject);
+    KeReleaseSpinLock(&dev_ext->spinlock1, irql);
 
     return STATUS_MORE_PROCESSING_REQUIRED;
 }
