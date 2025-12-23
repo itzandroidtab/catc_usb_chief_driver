@@ -21,17 +21,17 @@ struct usb_chief_vendor_request {
 struct chief_device_extension {
   PDEVICE_OBJECT attachedDeviceObject;
   PDEVICE_OBJECT physicalDeviceObject;
-  _POWER_STATE current_power_state;
-  _USB_CONFIGURATION_DESCRIPTOR *usb_config_desc;
+  POWER_STATE current_power_state;
+  USB_CONFIGURATION_DESCRIPTOR *usb_config_desc;
   USB_DEVICE_DESCRIPTOR *usb_device_desc;
   PUSBD_INTERFACE_INFORMATION usb_interface_info;
-  _DEVICE_CAPABILITIES device_capabilities;
-  _IRP *power_irp;
+  DEVICE_CAPABILITIES device_capabilities;
+  IRP *power_irp;
   _URB_BULK_OR_INTERRUPT_TRANSFER *bulk_interrupt_request;
-  _KEVENT event0;
-  _KEVENT event1;
-  _KEVENT event2;
-  _KEVENT power_complete_event;
+  KEVENT event0;
+  KEVENT event1;
+  KEVENT event2;
+  KEVENT power_complete_event;
   KSPIN_LOCK device_lock;
   LONG InterlockedValue1;
   LONG pipe_open_count;
@@ -42,6 +42,6 @@ struct chief_device_extension {
   volatile bool has_config_desc;
   volatile bool power_1_request_busy;
   volatile bool power_request_busy;
-  _POWER_STATE target_power_state;
+  POWER_STATE target_power_state;
 };
 
