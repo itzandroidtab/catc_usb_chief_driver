@@ -1713,5 +1713,239 @@ NTSTATUS mj_system_control(__in struct _DEVICE_OBJECT *DeviceObject, __inout str
 }
 
 NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *Irp) {
-    return STATUS_SUCCESS;
+    // the device and symbolic link names
+    constexpr static wchar_t symbolic_link_name[] = L"\\DosDevices\\ChiefUSB";
+
+    // get the current stack location
+    PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(Irp);
+
+    // get the device extension
+    chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;   
+
+    // acquire the spinlock
+    spinlock_acquire(DeviceObject);
+
+    NTSTATUS status = STATUS_SUCCESS;
+
+    // check the minor function
+    switch (stack->MinorFunction) {
+        case IRP_MN_START_DEVICE:
+            {
+                // create an event
+                KEVENT event;
+                KeInitializeEvent(&event, NotificationEvent, false);
+
+                // copy the current stack location to the next
+                IoCopyCurrentIrpStackLocationToNext(Irp);
+
+                // get the next stack location
+                PIO_STACK_LOCATION nextStack = IoGetNextIrpStackLocation(Irp);
+                nextStack->Context = &event;
+                nextStack->CompletionRoutine = signal_event_complete;
+                nextStack->Control = SL_INVOKE_ON_SUCCESS | SL_INVOKE_ON_ERROR | SL_INVOKE_ON_CANCEL;
+
+                // call the next driver
+                status = IofCallDriver(dev_ext->attachedDeviceObject, Irp);
+
+                if (status == STATUS_PENDING) {
+                    // wait for the event to be signaled
+                    KeWaitForSingleObject(
+                        &event,
+                        Suspended,
+                        KernelMode,
+                        false,
+                        nullptr
+                    );
+
+                    status = Irp->IoStatus.Status;
+                }
+
+                if (NT_SUCCESS(status)) {
+                    status = usb_get_device_desc(DeviceObject);
+                    Irp->IoStatus.Status = status;
+                }
+
+                IofCompleteRequest(Irp, IO_NO_INCREMENT);
+                spinlock_release(DeviceObject);
+                break;
+            }
+
+        case IRP_MN_REMOVE_DEVICE:
+            // stop everything that is running
+            spinlock_release(DeviceObject);
+            dev_ext->is_ejecting = true;
+            stop_device(DeviceObject);
+            usb_pipe_abort(DeviceObject);
+
+            // copy the current irp stack location to the next
+            IoCopyCurrentIrpStackLocationToNext(Irp);
+
+            // call the next driver
+            status = IofCallDriver(dev_ext->attachedDeviceObject, Irp);
+
+            // release the spinlock again
+            spinlock_release(DeviceObject);
+
+            KeWaitForSingleObject(
+                &dev_ext->event0, Suspended, KernelMode, false, nullptr
+            );
+
+            usb_cleanup_memory(DeviceObject);
+
+            // create unicode strings for the names
+            UNICODE_STRING symbolic_link_name_unicode;
+
+            // initialize the unicode strings
+            RtlInitUnicodeString(&symbolic_link_name_unicode, symbolic_link_name);
+
+            // delete the symbolic link
+            IoDeleteSymbolicLink(&symbolic_link_name_unicode);
+
+            // detach and delete the device
+            IoDetachDevice(dev_ext->attachedDeviceObject);
+            IoDeleteDevice(DeviceObject);
+            break;
+
+        case IRP_MN_STOP_DEVICE:
+            // stop the device
+            stop_device(DeviceObject);
+
+            // select the config descriptor
+            status = (
+                usb_clear_config_desc(DeviceObject)
+            );
+
+            if (NT_SUCCESS(status)) {
+                // Forward the IRP to the next driver
+                IoCopyCurrentIrpStackLocationToNext(Irp);
+
+                // call the next driver
+                status = IofCallDriver(dev_ext->attachedDeviceObject, Irp);
+            }
+            else {
+                Irp->IoStatus.Status = status;
+                IofCompleteRequest(Irp, IO_NO_INCREMENT);
+            }
+
+            spinlock_release(DeviceObject);
+            break;
+
+        case IRP_MN_QUERY_REMOVE_DEVICE:
+            // check if we have a config descriptor
+            if (!dev_ext->has_config_desc) {
+                // skip the irp
+                IoSkipCurrentIrpStackLocation(Irp);
+            }
+            else {
+                dev_ext->is_removing = true;
+
+                // wait for event2
+                KeWaitForSingleObject(
+                    &dev_ext->event2, Suspended, KernelMode, false, nullptr
+                );
+
+                Irp->IoStatus.Status = STATUS_SUCCESS;
+
+                // copy the current irp stack location to the next
+                IoCopyCurrentIrpStackLocationToNext(Irp);
+            }
+
+            // call the next driver
+            status = IofCallDriver(dev_ext->attachedDeviceObject, Irp);
+
+            // release the spinlock
+            spinlock_release(DeviceObject);
+            break;
+
+        case IRP_MN_QUERY_STOP_DEVICE:
+            // check if we have a config descriptor
+            if (!dev_ext->has_config_desc) {
+                // skip the irp
+                IoSkipCurrentIrpStackLocation(Irp);
+
+                // call the next driver
+                status = IofCallDriver(dev_ext->attachedDeviceObject, Irp);
+            }
+            else {
+                if (dev_ext->total_transfers) {
+                    // mark as unsuccessful
+                    Irp->IoStatus.Status = status = STATUS_UNSUCCESSFUL;
+
+                    // mark the irp as complete
+                    IofCompleteRequest(Irp, IO_NO_INCREMENT);
+                }
+                else {
+                    dev_ext->someflag_22 = true;
+                    Irp->IoStatus.Status = status = STATUS_SUCCESS;
+
+                    IofCompleteRequest(Irp, IO_NO_INCREMENT);
+                }
+            }
+
+            // release the spinlock
+            spinlock_release(DeviceObject);
+            break;
+
+        case IRP_MN_CANCEL_STOP_DEVICE:
+        case IRP_MN_CANCEL_REMOVE_DEVICE:
+            // check if we have a config descriptor
+            if (!dev_ext->has_config_desc) {
+                // skip the irp
+                IoSkipCurrentIrpStackLocation(Irp);
+            }
+            else {
+                if (stack->MinorFunction == IRP_MN_CANCEL_STOP_DEVICE) {
+                    dev_ext->someflag_22 = false;
+                }
+                else if (stack->MinorFunction == IRP_MN_CANCEL_REMOVE_DEVICE) {
+                    dev_ext->is_removing = false;
+                }
+
+                Irp->IoStatus.Status = STATUS_SUCCESS;
+
+                // Forward the IRP to the next driver
+                IoCopyCurrentIrpStackLocationToNext(Irp);
+            }
+
+            // call the next driver
+            status = IofCallDriver(dev_ext->attachedDeviceObject, Irp);
+
+            // release the spinlock
+            spinlock_release(DeviceObject);
+            break;
+
+        case IRP_MN_EJECT:
+            // release the spinlock
+            spinlock_release(DeviceObject);
+
+            // mark we are ejecting
+            dev_ext->is_ejecting = true;
+
+            // stop the device
+            stop_device(DeviceObject);
+            usb_pipe_abort(DeviceObject);
+
+            // set the irp status to success
+            Irp->IoStatus.Status = STATUS_SUCCESS;
+
+            // copy the current irp stack location to the next
+            IoCopyCurrentIrpStackLocationToNext(Irp);
+
+            // call the next driver
+            status = IofCallDriver(dev_ext->attachedDeviceObject, Irp);
+            break;
+
+        default:
+            // Forward the IRP to the next driver
+            IoCopyCurrentIrpStackLocationToNext(Irp);
+
+            // call the next driver
+            status = IofCallDriver(dev_ext->attachedDeviceObject, Irp);
+
+            // release the spinlock
+            spinlock_release(DeviceObject);
+            break;
+    }
+
+    return status;
 }
