@@ -935,6 +935,77 @@ static NTSTATUS usb_get_configuration_desc(_DEVICE_OBJECT* DeviceObject) {
     return usb_set_alternate_setting(DeviceObject, dev_ext->usb_config_desc, 0);
 }
 
+static NTSTATUS usb_get_device_desc(_DEVICE_OBJECT* DeviceObject) {
+    constexpr static unsigned int size = 0x50;
+    constexpr static unsigned int buffer_size = 0x12;
+
+    // get the device extension
+    chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
+
+    // allocate memory for the URB
+    _URB_CONTROL_DESCRIPTOR_REQUEST* usb_request = (_URB_CONTROL_DESCRIPTOR_REQUEST*)ExAllocatePoolWithTag(
+        NonPagedPool,
+        size,
+        0x206D6457u
+    );
+
+    if (!usb_request) {
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+
+    // allocate memory for the device descriptor
+    USB_DEVICE_DESCRIPTOR* buffer = (USB_DEVICE_DESCRIPTOR*)ExAllocatePoolWithTag(
+        NonPagedPool,
+        buffer_size,
+        0x206D6457u
+    );
+
+    NTSTATUS status;
+
+    if (!buffer) {
+        status = STATUS_INSUFFICIENT_RESOURCES;
+    }
+    else {
+        // initialize the URB for getting device descriptor
+        memset(usb_request, 0x00, size);
+        usb_request->Hdr.Function = URB_FUNCTION_GET_DESCRIPTOR_FROM_DEVICE;
+        usb_request->Hdr.Length = size;
+        usb_request->TransferBufferLength = buffer_size;
+        usb_request->TransferBuffer = buffer;
+        usb_request->DescriptorType = USB_DEVICE_DESCRIPTOR_TYPE;
+        usb_request->Index = 0;
+        usb_request->LanguageId = 0;
+
+        // send the URB
+        status = usb_send_urb(DeviceObject, (PURB)usb_request);
+    }
+
+    // check if we have an error
+    if (!NT_SUCCESS(status)) {
+        if (buffer) {
+            ExFreePool(buffer);
+        }
+    }
+    else {
+        // store the device descriptor in the device extension
+        dev_ext->usb_device_desc = buffer;
+    }
+
+    // free the URB
+    ExFreePool(usb_request);
+
+    // if successful, get the configuration descriptor
+    if (NT_SUCCESS(status)) {
+        status = usb_get_configuration_desc(DeviceObject);
+        
+        if (NT_SUCCESS(status)) {
+            dev_ext->has_config_desc = true;
+        }
+    }
+
+    return status;
+}
+
 static NTSTATUS usb_clear_config_desc(_DEVICE_OBJECT* DeviceObject) {
     constexpr static unsigned int size = 0x3c;
 
