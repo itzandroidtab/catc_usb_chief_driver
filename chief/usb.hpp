@@ -49,6 +49,14 @@ NTSTATUS usb_pipe_abort(_DEVICE_OBJECT* DeviceObject);
 NTSTATUS usb_get_device_desc(_DEVICE_OBJECT* DeviceObject);
 
 /**
+ * @brief Get the usb configuration descriptor
+ * 
+ * @param DeviceObject 
+ * @return NTSTATUS 
+ */
+NTSTATUS usb_get_configuration_desc(_DEVICE_OBJECT* DeviceObject);
+
+/**
  * @brief Clear the usb configuration descriptor
  * 
  * @param DeviceObject 
