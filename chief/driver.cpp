@@ -16,8 +16,8 @@ static void driver_unload(__in struct _DRIVER_OBJECT *DriverObject) {
 
 NTSTATUS add_chief_device(PDRIVER_OBJECT driver_object, PDEVICE_OBJECT* device_object) {
     // the device and symbolic link names
-    constexpr static wchar_t device_name[] = L"Device\\ChiefUSB";
-    constexpr static wchar_t symbolic_link_name[] = L"DosDevices\\ChiefUSB";
+    constexpr static wchar_t device_name[] = L"\\Device\\ChiefUSB";
+    constexpr static wchar_t symbolic_link_name[] = L"\\DosDevices\\ChiefUSB";
 
     // create unicode strings for the names
     UNICODE_STRING device_name_unicode;
