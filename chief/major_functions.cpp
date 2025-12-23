@@ -17,7 +17,7 @@ static bool delete_is_not_pending(__in struct _DEVICE_OBJECT *DeviceObject) {
     chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
     
     // return if the device is not being removed or ejected and has a configuration descriptor
-    return !dev_ext->is_removing && dev_ext->has_config_desc && !dev_ext->is_removing && !dev_ext->someflag_22;
+    return !dev_ext->is_ejecting && dev_ext->has_config_desc && !dev_ext->is_removing && !dev_ext->someflag_22;
 }
 
 /**
