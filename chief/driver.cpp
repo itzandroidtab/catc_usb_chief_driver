@@ -50,8 +50,6 @@ NTSTATUS add_chief_device(PDRIVER_OBJECT driver_object, PDEVICE_OBJECT* device_o
     chief_device_extension* dev_ext = (chief_device_extension*)((*device_object)->DeviceExtension);
 
     // TODO: if the symbolic link creation fails, we should delete the device object
-    // initialize fields
-    dev_ext->max_transfer_size = 64000;
 
     // initalize the events
     KeInitializeEvent(&dev_ext->event0, NotificationEvent, FALSE);
@@ -61,7 +59,6 @@ NTSTATUS add_chief_device(PDRIVER_OBJECT driver_object, PDEVICE_OBJECT* device_o
 
     // initialize spinlocks
     KeInitializeSpinLock(&dev_ext->device_lock);
-    KeInitializeSpinLock(&dev_ext->multi_transfer_lock);
 
     // reset the allocated pipes and usb_interface_info
     dev_ext->allocated_pipes = nullptr;
