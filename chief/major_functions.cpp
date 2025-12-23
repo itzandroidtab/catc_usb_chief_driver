@@ -357,13 +357,11 @@ NTSTATUS usb_send_receive_vendor_request(_DEVICE_OBJECT* DeviceObject, usb_chief
 
 NTSTATUS usb_set_alternate_setting(_DEVICE_OBJECT *deviceObject, PUSB_CONFIGURATION_DESCRIPTOR ConfigurationDescriptor, unsigned char AlternateSetting) {
     // check if we have a valid alternate setting
+    // TODO: hardcoded 2?
     if (AlternateSetting >= 2) {
         // TODO: invalid parameter sounds better here as error
         return STATUS_INSUFFICIENT_RESOURCES;
     }
-
-    // get the device extension
-    chief_device_extension* dev_ext = (chief_device_extension*)deviceObject->DeviceExtension;
 
     // switch to the alternate setting
     _USB_INTERFACE_DESCRIPTOR *descriptor = USBD_ParseConfigurationDescriptorEx(
@@ -380,53 +378,69 @@ NTSTATUS usb_set_alternate_setting(_DEVICE_OBJECT *deviceObject, PUSB_CONFIGURAT
         return STATUS_INSUFFICIENT_RESOURCES;
     }
 
-    struct _USBD_INTERFACE_LIST_ENTRY InterfaceList;
-    InterfaceList.InterfaceDescriptor = nullptr;
-    InterfaceList.Interface = 0;
+    // array must have N+1 elements for N interfaces, with last 
+    // element null-terminated
+    struct _USBD_INTERFACE_LIST_ENTRY InterfaceList[2];
+    InterfaceList[0].InterfaceDescriptor = descriptor;
+    InterfaceList[0].Interface = nullptr;
+    InterfaceList[1].InterfaceDescriptor = nullptr;
+    InterfaceList[1].Interface = nullptr;
 
     // create the urb
     PURB urb = USBD_CreateConfigurationRequestEx(
         ConfigurationDescriptor,
-        &InterfaceList
+        InterfaceList
     );
 
     if (!urb) {
         return STATUS_INSUFFICIENT_RESOURCES;
     }
 
+    // get the device extension
+    chief_device_extension* dev_ext = (chief_device_extension*)deviceObject->DeviceExtension;
+
     // free the allocated pipes if we have any
     if (dev_ext->allocated_pipes) {
+        // TODO: maybe we dont need to free this. If the number of pipes
+        // doesnt change between alternate settings?
         ExFreePool(dev_ext->allocated_pipes);
     }
 
     // allocate new memory for the allocated pipes
     dev_ext->allocated_pipes = (bool*)ExAllocatePoolWithTag(
         NonPagedPool,
-        sizeof(bool) * InterfaceList.Interface->NumberOfPipes,
+        sizeof(bool) * InterfaceList[0].Interface->NumberOfPipes,
         0x206D6457u
     );
 
     // check if we got memory
     if (!dev_ext->allocated_pipes) {
+        // The original driver doesnt do this, but we should
         // free the urb before we exit
         ExFreePool(urb);
-
+        
         // return we have an error
         return STATUS_INSUFFICIENT_RESOURCES;
     }
 
     // zero the allocated pipes
-    memset(dev_ext->allocated_pipes, 0x00, sizeof(bool) * InterfaceList.Interface->NumberOfPipes);
+    memset(dev_ext->allocated_pipes, 0x00, sizeof(bool) * InterfaceList[0].Interface->NumberOfPipes);
 
     // set the maximum transfer size for all pipes to the max_length
-    for (ULONG i = 0; i < InterfaceList.Interface->NumberOfPipes; i++) {
-        InterfaceList.Interface->Pipes[i].MaximumTransferSize = dev_ext->max_length;
+    // TODO: documentation says this is not used anymore.
+    for (ULONG i = 0; i < InterfaceList[0].Interface->NumberOfPipes; i++) {
+        InterfaceList[0].Interface->Pipes[i].MaximumTransferSize = dev_ext->max_length;
     }
 
     // set the urb
     urb->UrbHeader.Function = URB_FUNCTION_SELECT_CONFIGURATION;
-    urb->UrbHeader.Length = InterfaceList.Interface->Length;
-    urb->UrbSelectInterface.ConfigurationHandle = ConfigurationDescriptor;
+
+    // fixes the original issue. This was skipping the size of the
+    // _URB_SELECT_CONFIGURATION structure and causing a 0x7e error
+    urb->UrbHeader.Length = (USHORT)GET_SELECT_CONFIGURATION_REQUEST_SIZE(
+        1, InterfaceList[0].Interface->NumberOfPipes
+    );
+    urb->UrbSelectConfiguration.ConfigurationDescriptor = ConfigurationDescriptor;
 
     // send the urb
     NTSTATUS status = usb_send_urb(deviceObject, (PURB)urb);
@@ -437,6 +451,8 @@ NTSTATUS usb_set_alternate_setting(_DEVICE_OBJECT *deviceObject, PUSB_CONFIGURAT
 
     // check if we need to update the interface information
     if (NT_SUCCESS(status)) {
+        // TODO: check if free is needed. What if the usb_interface_info is the 
+        // same size? Big chance it is
         if (dev_ext->usb_interface_info) {
             ExFreePool(dev_ext->usb_interface_info);
         }
@@ -444,13 +460,13 @@ NTSTATUS usb_set_alternate_setting(_DEVICE_OBJECT *deviceObject, PUSB_CONFIGURAT
         // allocate new memory for the usb interface info
         dev_ext->usb_interface_info = (PUSBD_INTERFACE_INFORMATION)ExAllocatePoolWithTag(
             NonPagedPool,
-            InterfaceList.Interface->Length,
+            InterfaceList[0].Interface->Length,
             0x206D6457u
         );
 
         if (dev_ext->usb_interface_info) {
             // copy the interface info
-            memcpy(dev_ext->usb_interface_info, InterfaceList.Interface, InterfaceList.Interface->Length);
+            memcpy(dev_ext->usb_interface_info, InterfaceList[0].Interface, InterfaceList[0].Interface->Length);
         }
     }
     
