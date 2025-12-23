@@ -669,12 +669,16 @@ NTSTATUS usb_reset_upstream_port(_DEVICE_OBJECT *deviceObject) {
     return status;
 }
 
-NTSTATUS usb_reset_if_not_connected_or_enabled(_DEVICE_OBJECT* DeviceObject) {
+NTSTATUS usb_reset_if_not_enabled_but_conected(_DEVICE_OBJECT* DeviceObject) {
     ULONG status;
 
+    // get the current port status
     NTSTATUS res = get_usb_port_status(DeviceObject, &status);
 
+    // check if we got a success and if the port is not enabled (bit 0) 
+    // and if we are connected (bit 1)
     if (NT_SUCCESS(res) && ((status & 0x1) == 0) || ((status & 0x2) != 0)) {
+        // we are connected but not enabled, reset the upstream port
         return usb_reset_upstream_port(DeviceObject);
     }
 
@@ -937,7 +941,7 @@ NTSTATUS mj_read_write_impl(__in struct _DEVICE_OBJECT *DeviceObject, __inout st
     }
 
     if (!NT_SUCCESS(status) && delete_is_not_pending(DeviceObject) && usb_sync_reset_pipe_clear_stall(DeviceObject, pipe_info)) {
-        usb_reset_if_not_connected_or_enabled(DeviceObject);
+        usb_reset_if_not_enabled_but_conected(DeviceObject);
     }
 
     if (index) {
