@@ -143,11 +143,20 @@ static NTSTATUS add_device(__in struct _DRIVER_OBJECT *DriverObject, __in struct
     // initialize the device extension
     chief_device_extension* dev_ext = (chief_device_extension*)device_object->DeviceExtension;
 
-    // store the pyhsical device object
+    // store the physical device object
     dev_ext->physicalDeviceObject = PhysicalDeviceObject;
 
     // attach to the device stack
     dev_ext->attachedDeviceObject = IoAttachDeviceToDeviceStack(device_object, PhysicalDeviceObject);
+    
+    // check if we have a valid attached device object
+    if (dev_ext->attachedDeviceObject == NULL) {
+        // delete the allocated object
+        IoDeleteDevice(device_object);
+
+        // return no such device
+        return STATUS_NO_SUCH_DEVICE;
+    }
 
     // clear the resource structure
     dev_ext->resource = {};
