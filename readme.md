@@ -19,9 +19,10 @@ Some pictures of it working on a 64-bit Windows 11 machine
 3. Change the `SDK_ROOT` SDK path in `CMakeLists.txt` to your installed location
 4. Change `Kit` to "Visual studio xxxxxx amd64"
 5. Press build (or keyboard shortcut `F7`)
-6. Run powershell as admin
-7. Run `sign_driver.ps1`
-8. Install driver using `pnputil`, right clicking `usbchief.inf` or using the device manager
+6. Change `$WinDDKRoot` in `sign_driver.ps1` to the same path as `SDK_ROOT`
+7. Run powershell as admin
+8. Run `sign_driver.ps1`
+9. Install driver using `pnputil`, right clicking `usbchief.inf` or using the device manager
 
 ## Original software
 The original software can be found at [Teledynelecroy](https://www.teledynelecroy.com/support/softwaredownload/psg_swarchive.aspx?standardid=4). Search for in the archived downloads `chief`
