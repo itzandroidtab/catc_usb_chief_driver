@@ -713,7 +713,7 @@ NTSTATUS usb_bulk_or_interrupt_transfer_complete_1(PDEVICE_OBJECT DeviceObject, 
 
     // acquire the spinlock
     KIRQL irql;
-    KeAcquireSpinLock(&dev_ext->spinlock1, &irql);
+    KeAcquireSpinLock(&dev_ext->multi_transfer_lock, &irql);
 
     // decrease the total transfers count
     dev_ext->total_transfers--;
@@ -755,7 +755,7 @@ NTSTATUS usb_bulk_or_interrupt_transfer_complete_1(PDEVICE_OBJECT DeviceObject, 
     ExFreePool(transfer->transfer);
 
     // release the spinlock
-    KeReleaseSpinLock(&dev_ext->spinlock1, irql);
+    KeReleaseSpinLock(&dev_ext->multi_transfer_lock, irql);
 
     return STATUS_MORE_PROCESSING_REQUIRED;
 }
@@ -1286,7 +1286,7 @@ NTSTATUS mj_read_write_impl(__in struct _DEVICE_OBJECT *DeviceObject, __inout st
     if (index) {
         // acquire the spinlock
         KIRQL irql;
-        KeAcquireSpinLock(&dev_ext->spinlock1, &irql);
+        KeAcquireSpinLock(&dev_ext->multi_transfer_lock, &irql);
 
         if (dev_ext->multi_transfer_irp) {
             // set the status to pending
@@ -1299,7 +1299,7 @@ NTSTATUS mj_read_write_impl(__in struct _DEVICE_OBJECT *DeviceObject, __inout st
             status = STATUS_SUCCESS;
         }
 
-        KeReleaseSpinLock(&dev_ext->spinlock1, irql);
+        KeReleaseSpinLock(&dev_ext->multi_transfer_lock, irql);
     }
     else {
         IofCompleteRequest(Irp, IO_NO_INCREMENT);
