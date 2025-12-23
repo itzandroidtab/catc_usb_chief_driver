@@ -63,7 +63,7 @@ void set_power_complete(PDEVICE_OBJECT DeviceObject, UCHAR MinorFunction, POWER_
     // get the device extension
     chief_device_extension* dev_ext = (chief_device_extension*)device_object->DeviceExtension;
 
-    if (PowerState.DeviceState < dev_ext->powerstate2.DeviceState) {
+    if (PowerState.DeviceState < dev_ext->target_power_state.DeviceState) {
         // set the event to signal the power request is complete
         KeSetEvent(&dev_ext->power_complete_event, EVENT_INCREMENT, false);
     }
@@ -100,7 +100,7 @@ NTSTATUS change_power_state_impl(_DEVICE_OBJECT* DeviceObject, const POWER_STATE
     // check if we have a pending status
     if (status == STATUS_PENDING) {
         // check if we need to wait for the request to complete
-        if (state.DeviceState < dev_ext->powerstate2.DeviceState) {
+        if (state.DeviceState < dev_ext->target_power_state.DeviceState) {
             KeWaitForSingleObject(
                 &dev_ext->power_complete_event,
                 Suspended,
@@ -148,7 +148,7 @@ NTSTATUS change_power_state(_DEVICE_OBJECT* DeviceObject, const bool a2) {
     }
 
     // get the power state
-    const POWER_STATE state = dev_ext->powerstate2;
+    const POWER_STATE state = dev_ext->target_power_state;
 
     // check if we are currently in a working, unspecified or 
     // hibernate state (we only pass here if we are in a 
@@ -1513,11 +1513,11 @@ NTSTATUS mj_power(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
                 // check if the device is already awake
                 const DEVICE_POWER_STATE device_wake = dev_ext->device_capabilities.DeviceWake;
 
-                // set powerstate2 to the device wake state
-                dev_ext->powerstate2.DeviceState = device_wake;
+                // set target_power_state to the device wake state
+                dev_ext->target_power_state.DeviceState = device_wake;
 
                 // check if we are already in the PowerDeviceD0 state
-                if (state.DeviceState != PowerDeviceD0 || dev_ext->powerstate2.DeviceState < state.DeviceState) {
+                if (state.DeviceState != PowerDeviceD0 || dev_ext->target_power_state.DeviceState < state.DeviceState) {
                     dev_ext->power_1_request_busy = true;
 
                     // copy the current irp stack location to the next

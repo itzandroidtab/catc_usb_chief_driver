@@ -59,10 +59,7 @@ struct chief_device_extension {
   volatile bool has_config_desc;
   volatile bool power_1_request_busy;
   volatile bool power_request_busy;
-  bool padding[2];
-
-  // posible current power state
-  _POWER_STATE powerstate2;
+  _POWER_STATE target_power_state;
   ULONG max_transfer_size;
   KSPIN_LOCK multi_transfer_lock;
 };
