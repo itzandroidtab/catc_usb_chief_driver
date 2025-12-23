@@ -808,6 +808,62 @@ static void stop_device(_DEVICE_OBJECT* DeviceObject) {
     }
 }
 
+static NTSTATUS usb_pipe_abort(_DEVICE_OBJECT* DeviceObject) {
+    // get the device extension
+    chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
+
+    NTSTATUS status = STATUS_SUCCESS;
+    PUSBD_INTERFACE_INFORMATION interface_info = dev_ext->usb_interface_info;
+
+    // check if we have any pipes to abort
+    if (!interface_info || !interface_info->NumberOfPipes) {
+        return status;
+    }
+
+    // iterate through all pipes
+    for (ULONG i = 0; i < interface_info->NumberOfPipes; i++) {
+        // check if the pipe is allocated
+        if (!dev_ext->allocated_pipes[i]) {
+            continue;
+        }
+
+        // allocate memory for the URB
+        _URB_PIPE_REQUEST* urb = (_URB_PIPE_REQUEST*)ExAllocatePoolWithTag(
+            NonPagedPool,
+            sizeof(_URB_PIPE_REQUEST),
+            0x206D6457u
+        );
+
+        if (!urb) {
+            return STATUS_INSUFFICIENT_RESOURCES;
+        }
+
+        // initialize the URB for abort pipe
+        urb->Hdr.Length = sizeof(_URB_PIPE_REQUEST);
+        urb->Hdr.Function = URB_FUNCTION_ABORT_PIPE;
+        urb->PipeHandle = interface_info->Pipes[i].PipeHandle;
+
+        // send the URB
+        status = usb_send_urb(DeviceObject, (PURB)urb);
+
+        // free the URB
+        ExFreePool(urb);
+
+        // check if we have an error
+        if (!NT_SUCCESS(status)) {
+            return status;
+        }
+
+        // mark the pipe as free
+        dev_ext->allocated_pipes[i] = false;
+
+        // decrement the interlocked value
+        InterlockedDecrement(&dev_ext->lock_count);
+    }
+
+    return status;
+}
+
 NTSTATUS mj_read_write_impl(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *Irp, bool read) {
     // clear the information field
     Irp->IoStatus.Information = 0;
