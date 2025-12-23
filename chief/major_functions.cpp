@@ -329,6 +329,9 @@ NTSTATUS usb_send_receive_vendor_request(_DEVICE_OBJECT* DeviceObject, usb_chief
     usb->Request = Request->Reqeuest & 0xff;
     usb->Value = Request->value;
     usb->Index = Request->index;
+    usb->TransferFlags = (
+        receive ? (USBD_TRANSFER_DIRECTION_IN | USBD_SHORT_TRANSFER_OK) : (USBD_TRANSFER_DIRECTION_OUT)
+    );
     usb->UrbLink = nullptr;
 
     // send the urb
@@ -336,6 +339,9 @@ NTSTATUS usb_send_receive_vendor_request(_DEVICE_OBJECT* DeviceObject, usb_chief
 
     // check if we need to copy data back
     if (NT_SUCCESS(status) && receive && buffer) {
+        // update the request length
+        Request->length = usb->TransferBufferLength & 0xffff;
+
         // copy the data back to the request structure
         memcpy(Request->data, buffer, usb->TransferBufferLength);
     }
