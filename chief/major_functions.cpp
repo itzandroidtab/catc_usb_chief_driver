@@ -1511,7 +1511,7 @@ NTSTATUS mj_power(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
                 const POWER_STATE state = dev_ext->current_power_state;
 
                 // check if the device is already awake
-                const DEVICE_POWER_STATE device_wake = dev_ext->resource.DeviceWake;
+                const DEVICE_POWER_STATE device_wake = dev_ext->device_capabilities.DeviceWake;
 
                 // set powerstate2 to the device wake state
                 dev_ext->powerstate2.DeviceState = device_wake;
@@ -1581,7 +1581,7 @@ NTSTATUS mj_power(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
                         // to map it to a device power state
                         if (system_state != PowerSystemWorking) {
                             if (dev_ext->power_1_request_busy) {
-                                device_state.DeviceState = dev_ext->resource.DeviceState[system_state];
+                                device_state.DeviceState = dev_ext->device_capabilities.DeviceState[system_state];
                             }
                             else {
                                 device_state.DeviceState = PowerDeviceD3;

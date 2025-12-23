@@ -70,7 +70,7 @@ NTSTATUS add_chief_device(PDRIVER_OBJECT driver_object, PDEVICE_OBJECT* device_o
     return status;
 }
 
-NTSTATUS io_call_start_device(PDEVICE_OBJECT device_object, _DEVICE_CAPABILITIES* resource) {
+NTSTATUS io_call_start_device(PDEVICE_OBJECT device_object, _DEVICE_CAPABILITIES* device_capabilities) {
     // allocate a irp
     PIRP irp = IoAllocateIrp(device_object->StackSize, FALSE);
 
@@ -91,7 +91,7 @@ NTSTATUS io_call_start_device(PDEVICE_OBJECT device_object, _DEVICE_CAPABILITIES
     stack->CompletionRoutine = signal_event_complete;
     stack->Context = (void*)&event;
     stack->Control = SL_INVOKE_ON_SUCCESS | SL_INVOKE_ON_ERROR | SL_INVOKE_ON_CANCEL;
-    stack->Parameters.DeviceCapabilities.Capabilities = resource;
+    stack->Parameters.DeviceCapabilities.Capabilities = device_capabilities;
 
     irp->IoStatus.Status = STATUS_NOT_SUPPORTED;
 
@@ -159,14 +159,14 @@ static NTSTATUS add_device(__in struct _DRIVER_OBJECT *DriverObject, __in struct
     }
 
     // clear the resource structure
-    dev_ext->resource = {};
-    dev_ext->resource.Size = sizeof(_DEVICE_CAPABILITIES);
-    dev_ext->resource.Version = 1;
-    dev_ext->resource.Address = (ULONG)-1;
-    dev_ext->resource.UINumber = (ULONG)-1;
+    dev_ext->device_capabilities = {};
+    dev_ext->device_capabilities.Size = sizeof(_DEVICE_CAPABILITIES);
+    dev_ext->device_capabilities.Version = 1;
+    dev_ext->device_capabilities.Address = (ULONG)-1;
+    dev_ext->device_capabilities.UINumber = (ULONG)-1;
 
     // start the device
-    io_call_start_device(dev_ext->attachedDeviceObject, &dev_ext->resource);
+    io_call_start_device(dev_ext->attachedDeviceObject, &dev_ext->device_capabilities);
 
     // set the current power state to unspecified
     dev_ext->powerstate2.DeviceState = PowerDeviceUnspecified;

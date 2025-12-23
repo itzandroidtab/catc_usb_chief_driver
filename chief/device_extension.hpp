@@ -39,7 +39,7 @@ struct chief_device_extension {
   _USB_CONFIGURATION_DESCRIPTOR *usb_config_desc;
   USB_DEVICE_DESCRIPTOR *usb_device_desc;
   PUSBD_INTERFACE_INFORMATION usb_interface_info;
-  _DEVICE_CAPABILITIES resource;
+  _DEVICE_CAPABILITIES device_capabilities;
   _IRP *power_irp;
   _IRP *multi_transfer_irp;
   _URB_BULK_OR_INTERRUPT_TRANSFER *bulk_interrupt_request;
