@@ -10,6 +10,7 @@ extern "C" {
 
 NTSTATUS signal_event_complete(_DEVICE_OBJECT *DeviceObject, _IRP *Irp, void* Event) {
     KeSetEvent((PRKEVENT)Event, EVENT_INCREMENT, false);
+    
     return STATUS_MORE_PROCESSING_REQUIRED;
 }
 
@@ -109,10 +110,12 @@ NTSTATUS change_power_state_impl(_DEVICE_OBJECT* DeviceObject, const POWER_STATE
             );
         }
 
+        // TODO: why is this not using the status from the completion routine?
         status = STATUS_SUCCESS;
 
         // TODO: if the status is not pending this variable will never 
-        // be cleared. This doesnt look correct.
+        // be cleared. This doesnt look correct. This might need to be
+        // done in the completion routine instead
         dev_ext->power_request_busy = false;
     }
 

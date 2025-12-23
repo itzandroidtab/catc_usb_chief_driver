@@ -55,12 +55,12 @@ struct chief_device_extension {
   int field_17;
   bool *allocated_pipes;
   chief_transfer *payload;
-  bool is_ejecting;
-  bool is_removing;
-  bool someflag_22;
-  bool has_config_desc;
-  bool power_1_request_busy;
-  bool power_request_busy;
+  volatile bool is_ejecting;
+  volatile bool is_removing;
+  volatile bool someflag_22;
+  volatile bool has_config_desc;
+  volatile bool power_1_request_busy;
+  volatile bool power_request_busy;
   bool padding[2];
 
   // posible current power state
