@@ -1,0 +1,71 @@
+; /****************************************************************************
+; ** COPYRIGHT (C) 1997-2000 Computer Access Technology Corporation
+; ** 
+; ** HTTP://WWW.CATC.COM/                                                   
+; **
+; ****************************************************************************/
+
+[Version]
+Signature   = "$Windows NT$"
+Class       = USB
+ClassGuid   = {36fc9e60-c465-11cf-8056-444553540000} 
+Provider    = %MfgName%
+DriverVer   = 12/22/2025,1.0.0.5
+CatalogFile.NTamd64 = usbchief.cat
+
+[SourceDisksNames]
+1=%DiskName%,,,
+
+[SourceDisksFiles]
+usbchief.sys = 1
+
+[Manufacturer]
+%MfgName%=CATC,NTamd64
+
+[ControlFlags]
+ExcludeFromSelect  = USB\VID_0423&PID_000D
+
+[CATC.NTamd64]
+; CATC Chief USB Analyzer
+%USB\VID_0423&PID_000D.DeviceDesc%=USBCHIEF.Dev, USB\VID_0423&PID_000D
+
+[DestinationDirs]
+DefaultDestDir = 13
+USBCHIEF.CopyList = 13
+
+[USBCHIEF.Dev]
+CopyFiles=USBCHIEF.CopyList
+AddReg=USBCHIEF.AddReg
+
+[USBCHIEF.Dev.NTamd64]
+CopyFiles=USBCHIEF.CopyList
+BusType         = 5
+Characteristics = 0x84
+AddReg=USBCHIEF.AddReg
+
+[USBCHIEF.Dev.NTamd64.Services]
+Addservice = USBCHIEF, 0x00000002, USBCHIEF.AddService
+
+[USBCHIEF.AddService]
+DisplayName    = %USBCHIEF.SvcDesc%
+ServiceType    = 1                  ; SERVICE_KERNEL_DRIVER
+StartType      = 3                  ; SERVICE_DEMAND_START
+ErrorControl   = 1                  ; SERVICE_ERROR_NORMAL
+ServiceBinary  = %13%\usbchief.sys
+LoadOrderGroup = Base
+
+
+[USBCHIEF.AddReg]
+HKR,,DevLoader,,*ntkern
+HKR,,NTMPDriver,,USBCHIEF.sys
+
+[USBCHIEF.CopyList]
+USBCHIEF.sys
+
+;---------------------------------------------------------------;
+
+[Strings]
+MfgName="CATC"
+USB\VID_0423&PID_000D.DeviceDesc="CATC USB Chief Bus & Protocol Analyzer"
+USBCHIEF.SvcDesc="CATC USB Chief Bus & Protocol Analyzer"
+DiskName = "USB Chief driver install diskette"
