@@ -20,55 +20,38 @@ static bool delete_is_not_pending(__in struct _DEVICE_OBJECT *DeviceObject) {
     return !dev_ext->is_removing && dev_ext->has_config_desc && !dev_ext->is_removing && !dev_ext->someflag_22;
 }
 
-static ULONG get_pipe_from_unicode_str(_DEVICE_OBJECT* DeviceObject, _UNICODE_STRING* FileName) {
-    // get the device extension
-    chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
+/**
+ * @brief Get the pipe from unicode str
+ * 
+ * @param FileName 
+ * @return ULONG 
+ */
+static ULONG get_pipe_from_unicode_str(_UNICODE_STRING* FileName) {
+    // Parse pipe number from end of filename
+    // Example: "\PIPE00" -> returns 0
     
-    // get the length in characters
-    const unsigned int length_in_chars = FileName->Length / sizeof(wchar_t);
-
-    // search backwards for the last digit in the file name. Then we will read all the 
-    // digits until we hit a non-digit character. This is the offset of the pipe in the
-    // allocated pipes array.
-    // example: "Device\ChiefUSB\Pipe13" -> we want to read '13' as the pipe index
-    int index;
-    for (index = (length_in_chars - 1); index >= 0; index--) {
-        // get the current character
-        const wchar_t ch = FileName->Buffer[index];
-
-        // check if its a digit
-        if (ch < L'0' || ch > L'9') {
+    const int length = FileName->Length / sizeof(wchar_t);
+    
+    ULONG result = 0;
+    ULONG multiplier = 1;
+    bool found_digit = false;
+    
+    // Parse digits from right to left
+    for (int i = length - 1; i >= 0; i--) {
+        const wchar_t ch = FileName->Buffer[i];
+        
+        if (ch >= L'0' && ch <= L'9') {
+            result += (ch - L'0') * multiplier;
+            multiplier *= 10;
+            found_digit = true;
+        }
+        else if (found_digit) {
+            // Hit non-digit after finding digits, we're done
             break;
         }
     }
-
-    // check if we found any digits
-    if (!index) {
-        return ULONG_MAX;
-    }
-
-    int pipe_offset = 0;
-    int multiplier = 1;
     
-    // convert the digits to a number. Convert backwards from index to 0
-    for (; index >= 0; index--) {
-        // get the current character
-        const wchar_t ch = FileName->Buffer[index];
-
-        // check if its a digit. If not we have reached the end of the number
-        if (ch < L'0' || ch > L'9') {
-            break;
-        }
-
-        // convert to number
-        const int digit = ch - L'0';
-
-        // add the digit to the offset
-        pipe_offset += (digit * multiplier);
-        multiplier *= 10;
-    }
-
-    return pipe_offset;
+    return found_digit ? result : ULONG_MAX;
 }
 
 void set_power_complete(PDEVICE_OBJECT DeviceObject, UCHAR MinorFunction, POWER_STATE PowerState, PVOID Context, PIO_STATUS_BLOCK IoStatus) {
@@ -1000,7 +983,7 @@ NTSTATUS mj_create(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP
         // check if we have a file name
         if (file->FileName.Length) {
             // get the pipe index from the file name
-            ULONG pipe_index = get_pipe_from_unicode_str(DeviceObject, &file->FileName);
+            ULONG pipe_index = get_pipe_from_unicode_str(&file->FileName);
 
             // check if we got a valid pipe index
             if (pipe_index >= dev_ext->usb_interface_info->NumberOfPipes) {
@@ -1046,7 +1029,7 @@ NTSTATUS mj_close(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
     // check if we have a valid fs context
     if (file->FsContext) {
         // get the pipe from the filename
-        const ULONG pipe_index = get_pipe_from_unicode_str(DeviceObject, &file->FileName);
+        const ULONG pipe_index = get_pipe_from_unicode_str(&file->FileName);
 
         // check if the pipe index is valid
         if (pipe_index < dev_ext->usb_interface_info->NumberOfPipes) {
