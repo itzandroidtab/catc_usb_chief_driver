@@ -65,7 +65,7 @@ struct chief_device_extension {
 
   // posible current power state
   _POWER_STATE powerstate2;
-  int max_length;
+  ULONG max_transfer_size;
   KSPIN_LOCK spinlock1;
 };
 

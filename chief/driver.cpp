@@ -51,7 +51,7 @@ NTSTATUS add_chief_device(PDRIVER_OBJECT driver_object, PDEVICE_OBJECT* device_o
 
     // TODO: if the symbolic link creation fails, we should delete the device object
     // initialize fields
-    dev_ext->max_length = 64000;
+    dev_ext->max_transfer_size = 64000;
 
     // initalize the events
     KeInitializeEvent(&dev_ext->event0, NotificationEvent, FALSE);

@@ -430,10 +430,10 @@ NTSTATUS usb_set_alternate_setting(_DEVICE_OBJECT *deviceObject, PUSB_CONFIGURAT
     // zero the allocated pipes
     memset(dev_ext->allocated_pipes, 0x00, sizeof(bool) * InterfaceList[0].Interface->NumberOfPipes);
 
-    // set the maximum transfer size for all pipes to the max_length
+    // set the maximum transfer size for all pipes to the max_transfer_size
     // TODO: documentation says this is not used anymore.
     for (ULONG i = 0; i < InterfaceList[0].Interface->NumberOfPipes; i++) {
-        InterfaceList[0].Interface->Pipes[i].MaximumTransferSize = dev_ext->max_length;
+        InterfaceList[0].Interface->Pipes[i].MaximumTransferSize = dev_ext->max_transfer_size;
     }
 
     // set the urb
@@ -1129,7 +1129,7 @@ NTSTATUS mj_read_write_impl(__in struct _DEVICE_OBJECT *DeviceObject, __inout st
     const int length = (Irp->MdlAddress) ? MmGetMdlByteCount(Irp->MdlAddress) : 0;
 
     // check if the length is more than the maximum length
-    if (length <= dev_ext->max_length) {
+    if (length <= dev_ext->max_transfer_size) {
         // we can do it in one transfer
         return usb_send_bulk_or_interrupt_transfer(DeviceObject, Irp, read);
     }
@@ -1150,7 +1150,7 @@ NTSTATUS mj_read_write_impl(__in struct _DEVICE_OBJECT *DeviceObject, __inout st
     auto* pipe_info = (USBD_PIPE_INFORMATION*)file->FsContext;
 
     // get the total amount of transfers needed (ceiling division)
-    const int total_transfers = (length + dev_ext->max_length - 1) / dev_ext->max_length;
+    const int total_transfers = (length + dev_ext->max_transfer_size - 1) / dev_ext->max_transfer_size;
 
     // allocate memory for the chief_transfer add 1 for the extra null terminator
     chief_transfer* transfers = (chief_transfer*)ExAllocatePoolWithTag(
@@ -1191,7 +1191,7 @@ NTSTATUS mj_read_write_impl(__in struct _DEVICE_OBJECT *DeviceObject, __inout st
     NTSTATUS status = STATUS_SUCCESS;
 
     unsigned long offset = 0;
-    unsigned long current_max_length = dev_ext->max_length;
+    unsigned long current_max_transfer_size = dev_ext->max_transfer_size;
     int index;
 
     for (index = 0; index < total_transfers; index++, current_transfer++) {
@@ -1211,7 +1211,7 @@ NTSTATUS mj_read_write_impl(__in struct _DEVICE_OBJECT *DeviceObject, __inout st
         }
 
         // allocate memory for the mdl
-        // TODO: does this need the full length? Shouldnt it just be the max_length?
+        // TODO: does this need the full length? Shouldnt it just be the max_transfer_size?
         PMDL mdl = IoAllocateMdl(MmGetMdlVirtualAddress(Irp->MdlAddress), length, 0, 0, transfer_irp);
 
         if (!mdl) {
@@ -1220,18 +1220,18 @@ NTSTATUS mj_read_write_impl(__in struct _DEVICE_OBJECT *DeviceObject, __inout st
         }
 
         // TODO: why is this here? We already know all the transfer sizes beforehand
-        if (((long)(offset + current_max_length)) > length) {
-            current_max_length = length - offset;
+        if (((long)(offset + current_max_transfer_size)) > length) {
+            current_max_transfer_size = length - offset;
         }
 
         IoBuildPartialMdl(
             Irp->MdlAddress,
             mdl,
             (PCHAR)MmGetMdlVirtualAddress(Irp->MdlAddress) + offset,
-            current_max_length
+            current_max_transfer_size
         );
 
-        offset += current_max_length;
+        offset += current_max_transfer_size;
 
         // create the bulk or interrupt transfer request
         _URB_BULK_OR_INTERRUPT_TRANSFER* request = usb_create_bulk_or_interrupt_transfer(
