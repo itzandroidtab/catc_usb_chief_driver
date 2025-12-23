@@ -253,13 +253,13 @@ NTSTATUS usb_send_urb(_DEVICE_OBJECT* DeviceObject, PURB Urb) {
     struct _IO_STATUS_BLOCK IoStatusBlock = {};
 
     PIRP irp = IoBuildDeviceIoControlRequest(
-        CTL_CODE(FILE_DEVICE_USB, 0x0, METHOD_NEITHER, FILE_ANY_ACCESS),
+        IOCTL_INTERNAL_USB_SUBMIT_URB,
         dev_ext->attachedDeviceObject,
+        nullptr,
         0,
+        nullptr,
         0,
-        0,
-        0,
-        TRUE,
+        true,
         &event,
         &IoStatusBlock
     );
@@ -508,9 +508,6 @@ _URB_BULK_OR_INTERRUPT_TRANSFER* usb_create_bulk_or_interrupt_transfer(__in stru
 }
 
 NTSTATUS usb_bulk_or_interrupt_transfer_complete_0(PDEVICE_OBJECT DeviceObject, PIRP Irp, PVOID Context) {
-    // get the device extension
-    chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
-
     // check if we have a pending return
     if (Irp->PendingReturned) {
         IoGetCurrentIrpStackLocation(Irp)->Control |= SL_PENDING_RETURNED;
@@ -518,6 +515,9 @@ NTSTATUS usb_bulk_or_interrupt_transfer_complete_0(PDEVICE_OBJECT DeviceObject, 
     
     // TODO: Shouldnt the spinlock be released at the end of this function?
     spinlock_release(DeviceObject);
+
+    // get the device extension
+    chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
 
     // set the irp status to success
     Irp->IoStatus.Status = STATUS_SUCCESS;
@@ -599,6 +599,7 @@ NTSTATUS get_usb_port_status(_DEVICE_OBJECT* DeviceObject, ULONG* Status) {
 
     struct _IO_STATUS_BLOCK IoStatusBlock;
 
+    // TODO: no null check for Status?
     // clear the status 
     *Status = 0;
 
@@ -612,16 +613,15 @@ NTSTATUS get_usb_port_status(_DEVICE_OBJECT* DeviceObject, ULONG* Status) {
         dev_ext->attachedDeviceObject,
         nullptr,
         0,
+        nullptr,
         0,
-        0,
-        TRUE,
+        true,
         &event,
         &IoStatusBlock
     );
 
     // get the next stack location
     PIO_STACK_LOCATION stack = IoGetNextIrpStackLocation(irp);
-
     stack->Parameters.Others.Argument1 = Status;
 
     // call the driver
@@ -657,11 +657,11 @@ NTSTATUS usb_reset_upstream_port(_DEVICE_OBJECT *deviceObject) {
     PIRP request = IoBuildDeviceIoControlRequest(
         IOCTL_INTERNAL_USB_RESET_PORT,
         dev_ext->attachedDeviceObject,
+        nullptr,
         0,
+        nullptr,
         0,
-        0,
-        0,
-        1u,
+        true,
         &event,
         &IoStatusBlock
     );
