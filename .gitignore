@@ -1,2 +1,7 @@
 build/
 .vscode/
+
+*.sys
+*.pdb
+*.cat
+usbchieftestsign.*
