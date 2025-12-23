@@ -864,6 +864,48 @@ static NTSTATUS usb_pipe_abort(_DEVICE_OBJECT* DeviceObject) {
     return status;
 }
 
+static NTSTATUS usb_cleanup_memory(_DEVICE_OBJECT* DeviceObject) {
+    // get the device extension
+    chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
+    
+    // free all the allocated usb memory
+    if (dev_ext->usb_device_desc) {
+        ExFreePool(dev_ext->usb_device_desc);
+        dev_ext->usb_device_desc = nullptr;
+    }
+
+    // free the allocated pipes
+    if (dev_ext->allocated_pipes) {
+        ExFreePool(dev_ext->allocated_pipes);
+        dev_ext->allocated_pipes = nullptr;
+    }
+
+    // free the usb interface info
+    if (dev_ext->usb_interface_info) {
+        ExFreePool(dev_ext->usb_interface_info);
+        dev_ext->usb_interface_info = nullptr;
+    }
+
+    // free the usb configuration descriptor
+    if (dev_ext->usb_config_desc) {
+        ExFreePool(dev_ext->usb_config_desc);
+        dev_ext->usb_config_desc = nullptr;
+    }
+
+    // free the payload
+    if (dev_ext->payload) {
+        auto** transfer = &dev_ext->payload;
+        ExFreePool(dev_ext->payload);
+        
+        dev_ext->payload = nullptr;
+
+        // TODO: not sure why they are doing this
+        *transfer = nullptr;
+    }
+
+    return STATUS_SUCCESS;
+}
+
 NTSTATUS mj_read_write_impl(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *Irp, bool read) {
     // clear the information field
     Irp->IoStatus.Information = 0;
