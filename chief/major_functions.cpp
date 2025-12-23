@@ -65,7 +65,7 @@ void set_power_complete(PDEVICE_OBJECT DeviceObject, UCHAR MinorFunction, POWER_
 
     if (PowerState.DeviceState < dev_ext->powerstate2.DeviceState) {
         // set the event to signal the power request is complete
-        KeSetEvent(&dev_ext->event3, EVENT_INCREMENT, false);
+        KeSetEvent(&dev_ext->power_complete_event, EVENT_INCREMENT, false);
     }
 
     // release the spinlock
@@ -102,7 +102,7 @@ NTSTATUS change_power_state_impl(_DEVICE_OBJECT* DeviceObject, const POWER_STATE
         // check if we need to wait for the request to complete
         if (state.DeviceState < dev_ext->powerstate2.DeviceState) {
             KeWaitForSingleObject(
-                &dev_ext->event3,
+                &dev_ext->power_complete_event,
                 Suspended,
                 KernelMode,
                 false,

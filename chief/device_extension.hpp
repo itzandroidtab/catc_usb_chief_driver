@@ -47,7 +47,7 @@ struct chief_device_extension {
   _KEVENT event0;
   _KEVENT event1;
   _KEVENT event2;
-  _KEVENT event3;
+  _KEVENT power_complete_event;
   int a1;
   KSPIN_LOCK spinlock0;
   LONG InterlockedValue1;
