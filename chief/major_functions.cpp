@@ -268,8 +268,9 @@ NTSTATUS usb_send_urb(_DEVICE_OBJECT* DeviceObject, PURB Urb) {
         return STATUS_INSUFFICIENT_RESOURCES;
     }
 
-    // get the current stack location and store the context
-    IoGetCurrentIrpStackLocation(irp)->Parameters.Others.Argument1 = Urb;
+    // get the next stack location and store the URB pointer for the USB stack
+    PIO_STACK_LOCATION stack = IoGetNextIrpStackLocation(irp);
+    stack->Parameters.Others.Argument1 = (void*)Urb;
 
     NTSTATUS status = IofCallDriver(dev_ext->attachedDeviceObject, irp);
 
