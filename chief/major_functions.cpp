@@ -430,12 +430,6 @@ NTSTATUS usb_set_alternate_setting(_DEVICE_OBJECT *deviceObject, PUSB_CONFIGURAT
     // zero the allocated pipes
     memset(dev_ext->allocated_pipes, 0x00, sizeof(bool) * InterfaceList[0].Interface->NumberOfPipes);
 
-    // set the maximum transfer size for all pipes to the max_transfer_size
-    // TODO: documentation says this is not used anymore.
-    for (ULONG i = 0; i < InterfaceList[0].Interface->NumberOfPipes; i++) {
-        InterfaceList[0].Interface->Pipes[i].MaximumTransferSize = dev_ext->max_transfer_size;
-    }
-
     // set the urb
     urb->UrbHeader.Function = URB_FUNCTION_SELECT_CONFIGURATION;
 
@@ -448,10 +442,6 @@ NTSTATUS usb_set_alternate_setting(_DEVICE_OBJECT *deviceObject, PUSB_CONFIGURAT
 
     // send the urb
     NTSTATUS status = usb_send_urb(deviceObject, (PURB)urb);
-
-    // set the usb config handle
-    // TODO: not sure if this changes with the usb_send_urb call
-    dev_ext->usb_config_handle = urb->UrbSelectConfiguration.ConfigurationHandle;
 
     // check if we need to update the interface information
     if (NT_SUCCESS(status)) {
@@ -704,61 +694,7 @@ NTSTATUS usb_reset_if_not_enabled_but_conected(_DEVICE_OBJECT* DeviceObject) {
     return res;
 }
 
-NTSTATUS usb_bulk_or_interrupt_transfer_complete_1(PDEVICE_OBJECT DeviceObject, PIRP Irp, PVOID Context) {
-    // convert the context to a chief_transfer pointer
-    chief_transfer* transfer = (chief_transfer*)Context;
 
-    // get the device extension
-    chief_device_extension* dev_ext = (chief_device_extension*)transfer->deviceObject->DeviceExtension;
-
-    // acquire the spinlock
-    KIRQL irql;
-    KeAcquireSpinLock(&dev_ext->multi_transfer_lock, &irql);
-
-    // decrease the total transfers count
-    dev_ext->total_transfers--;
-
-    // release the spinlock
-    spinlock_release(DeviceObject);
-    
-    // TODO: why is this changing something in the event0 header lock?
-    dev_ext->event0.Header.Lock += transfer->transfer->TransferBufferLength;
-    Irp->IoStatus.Information = transfer->transfer->TransferBufferLength;
-
-    // free the irp
-    IoFreeIrp(transfer->irp);
-    transfer->irp = nullptr;
-
-    // free the mdl
-    IoFreeMdl(transfer->targetMdl);
-    transfer->targetMdl = nullptr;
-
-    // check if we have more transfers to do
-    if (!dev_ext->total_transfers) {
-        // set the irp status to success
-        dev_ext->multi_transfer_irp->IoStatus.Status = STATUS_SUCCESS;
-
-        // TODO: not sure if this is correct. It doesnt look like that for me
-        dev_ext->multi_transfer_irp->IoStatus.Information = dev_ext->event0.Header.Lock;
-
-        // complete the irp
-        IofCompleteRequest(dev_ext->multi_transfer_irp, IO_NO_INCREMENT);
-
-        // free the transfer memory
-        ExFreePool(dev_ext->payload);
-        dev_ext->payload = nullptr;
-        dev_ext->multi_transfer_irp = nullptr;
-
-        KeSetEvent(&dev_ext->event1, EVENT_INCREMENT, false);
-    }
-
-    ExFreePool(transfer->transfer);
-
-    // release the spinlock
-    KeReleaseSpinLock(&dev_ext->multi_transfer_lock, irql);
-
-    return STATUS_MORE_PROCESSING_REQUIRED;
-}
 
 NTSTATUS usb_sync_reset_pipe_clear_stall(__in struct _DEVICE_OBJECT *DeviceObject, USBD_PIPE_INFORMATION* Pipe) {
     // create the urb
@@ -784,49 +720,6 @@ NTSTATUS usb_sync_reset_pipe_clear_stall(__in struct _DEVICE_OBJECT *DeviceObjec
     ExFreePool(request);
 
     return status;
-}
-
-static void stop_device(_DEVICE_OBJECT* DeviceObject) {
-    // get the device extension
-    chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
-
-    // check if we have any payload
-    if (!dev_ext->payload) {
-        return;
-    }
-
-    chief_transfer* transfer = dev_ext->payload;
-
-    // check if we have any irps to cancel
-    if (!transfer->irp) {
-        return;
-    }
-
-    // cancel all pending irps
-    bool last_result = false;
-    int count = 0;
-
-    // iterate through all irps and cancel them
-    for (PIRP* irp = &transfer->irp; *irp; irp++, count++) {
-        // cancel the irp
-        last_result = IoCancelIrp(*irp);
-        
-        // check for failure
-        if (!last_result) {
-            break;
-        }
-    }
-
-    // wait for all the cancelled irps to complete
-    if (count && last_result) {
-        KeWaitForSingleObject(
-            &dev_ext->event1,
-            Suspended,
-            KernelMode,
-            false,
-            nullptr
-        );
-    }
 }
 
 static NTSTATUS usb_pipe_abort(_DEVICE_OBJECT* DeviceObject) {
@@ -1092,17 +985,6 @@ static NTSTATUS usb_cleanup_memory(_DEVICE_OBJECT* DeviceObject) {
         dev_ext->usb_config_desc = nullptr;
     }
 
-    // free the payload
-    if (dev_ext->payload) {
-        auto** transfer = &dev_ext->payload;
-        ExFreePool(dev_ext->payload);
-        
-        dev_ext->payload = nullptr;
-
-        // TODO: not sure why they are doing this
-        *transfer = nullptr;
-    }
-
     return STATUS_SUCCESS;
 }
 
@@ -1129,183 +1011,13 @@ NTSTATUS mj_read_write_impl(__in struct _DEVICE_OBJECT *DeviceObject, __inout st
     const int length = (Irp->MdlAddress) ? MmGetMdlByteCount(Irp->MdlAddress) : 0;
 
     // check if the length is more than the maximum length
-    if (length <= dev_ext->max_transfer_size) {
+    if (length <= 64000) {
         // we can do it in one transfer
         return usb_send_bulk_or_interrupt_transfer(DeviceObject, Irp, read);
     }
 
-    // we need to do multiple transfers. Get the file object
-    PFILE_OBJECT file = IoGetCurrentIrpStackLocation(Irp)->FileObject;
-
-    // check for a valid fs context
-    if (!file || !file->FsContext) {
-        Irp->IoStatus.Status = STATUS_INVALID_HANDLE;
-
-        // complete the irp
-        IofCompleteRequest(Irp, 0);
-
-        return STATUS_INVALID_HANDLE;
-    }
-
-    auto* pipe_info = (USBD_PIPE_INFORMATION*)file->FsContext;
-
-    // get the total amount of transfers needed (ceiling division)
-    const int total_transfers = (length + dev_ext->max_transfer_size - 1) / dev_ext->max_transfer_size;
-
-    // allocate memory for the chief_transfer add 1 for the extra null terminator
-    chief_transfer* transfers = (chief_transfer*)ExAllocatePoolWithTag(
-        NonPagedPool,
-        sizeof(chief_transfer) * total_transfers,
-        0x206D6457u
-    );
-
-    // check if we got memory
-    if (!transfers) {
-        Irp->IoStatus.Status = STATUS_INSUFFICIENT_RESOURCES;
-
-        // complete the irp
-        IofCompleteRequest(Irp, 0);
-
-        return STATUS_INSUFFICIENT_RESOURCES;
-    }
-
-    // clear the memory
-    memset(transfers, 0x00, sizeof(chief_transfer) * total_transfers);
-
-    // reset the event0
-    KeResetEvent(&dev_ext->event0);
-
-    // store the irp in the device extension
-    dev_ext->multi_transfer_irp = Irp;
-
-    // set the transfer in the payload
-    dev_ext->payload = transfers;
-
-    // store the total transfers in the device extension
-    dev_ext->total_transfers = total_transfers;
-
-    // TODO: rework this, why does this not just use the callback to start a new transfer?
-    // get the current transfer
-    chief_transfer* current_transfer = transfers;
-
-    NTSTATUS status = STATUS_SUCCESS;
-
-    unsigned long offset = 0;
-    unsigned long current_max_transfer_size = dev_ext->max_transfer_size;
-    int index;
-
-    for (index = 0; index < total_transfers; index++, current_transfer++) {
-        // check if we have a delete pending
-        if (!delete_is_not_pending(DeviceObject)) {
-            status = STATUS_DELETE_PENDING;
-
-            break;
-        }
-
-        // allocate a irp for the transfer
-        PIRP transfer_irp = IoAllocateIrp(DeviceObject->StackSize + 1, false);
-
-        // check if we got a irp
-        if (!transfer_irp) {
-            break;
-        }
-
-        // allocate memory for the mdl
-        // TODO: does this need the full length? Shouldnt it just be the max_transfer_size?
-        PMDL mdl = IoAllocateMdl(MmGetMdlVirtualAddress(Irp->MdlAddress), length, 0, 0, transfer_irp);
-
-        if (!mdl) {
-            // TODO: this might need to free the irp before exiting
-            break;
-        }
-
-        // TODO: why is this here? We already know all the transfer sizes beforehand
-        if (((long)(offset + current_max_transfer_size)) > length) {
-            current_max_transfer_size = length - offset;
-        }
-
-        IoBuildPartialMdl(
-            Irp->MdlAddress,
-            mdl,
-            (PCHAR)MmGetMdlVirtualAddress(Irp->MdlAddress) + offset,
-            current_max_transfer_size
-        );
-
-        offset += current_max_transfer_size;
-
-        // create the bulk or interrupt transfer request
-        _URB_BULK_OR_INTERRUPT_TRANSFER* request = usb_create_bulk_or_interrupt_transfer(
-            DeviceObject, transfer_irp,
-            pipe_info, read
-        );
-
-        if (!request) {
-            // TODO: free the mdl and irp before exiting. Why does this driver not free anything on error?
-            break;
-        }
-
-        // set the context
-        dev_ext->payload[0].transfer = request;
-        dev_ext->payload[0].deviceObject = DeviceObject;
-        dev_ext->payload[0].irp = transfer_irp;
-        dev_ext->payload[0].targetMdl = mdl;
-
-        // get the next stack location
-        PIO_STACK_LOCATION stack = IoGetNextIrpStackLocation(transfer_irp);
-
-        stack->MajorFunction = IRP_MJ_INTERNAL_DEVICE_CONTROL;
-        stack->Parameters.DeviceIoControl.IoControlCode = IOCTL_INTERNAL_USB_SUBMIT_URB;
-        stack->Parameters.Others.Argument1 = request;
-        stack->CompletionRoutine = usb_bulk_or_interrupt_transfer_complete_1;
-        stack->Context = &dev_ext->payload[0];
-        stack->Control = SL_INVOKE_ON_SUCCESS | SL_INVOKE_ON_ERROR | SL_INVOKE_ON_CANCEL;
-
-        // acquire the spinlock
-        spinlock_acquire(DeviceObject);
-
-        // call the driver
-        NTSTATUS result = IofCallDriver(dev_ext->attachedDeviceObject, transfer_irp);
-
-        // check if we have an error
-        if (!NT_SUCCESS(result)) {
-            // TODO: free the allocated resources before exiting
-            break;
-        }
-
-        // check if we are not done yet
-        if (index != (total_transfers - 1)) {
-            // increment the payload pointer
-            dev_ext->payload++;
-        }
-    }
-
-    if (!NT_SUCCESS(status) && delete_is_not_pending(DeviceObject) && usb_sync_reset_pipe_clear_stall(DeviceObject, pipe_info)) {
-        usb_reset_if_not_enabled_but_conected(DeviceObject);
-    }
-
-    if (index) {
-        // acquire the spinlock
-        KIRQL irql;
-        KeAcquireSpinLock(&dev_ext->multi_transfer_lock, &irql);
-
-        if (dev_ext->multi_transfer_irp) {
-            // set the status to pending
-            Irp->IoStatus.Status = status = STATUS_PENDING;
-            
-            // set the pending returned flag
-            IoGetCurrentIrpStackLocation(Irp)->Control |= SL_PENDING_RETURNED;
-        }
-        else {
-            status = STATUS_SUCCESS;
-        }
-
-        KeReleaseSpinLock(&dev_ext->multi_transfer_lock, irql);
-    }
-    else {
-        IofCompleteRequest(Irp, IO_NO_INCREMENT);
-    }
-
-    return status;
+    // TODO: change to better error code
+    return STATUS_NOT_IMPLEMENTED;
 }
 
 NTSTATUS mj_create(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *Irp) {
@@ -1777,7 +1489,6 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
             // stop everything that is running
             spinlock_release(DeviceObject);
             dev_ext->is_ejecting = true;
-            stop_device(DeviceObject);
             usb_pipe_abort(DeviceObject);
 
             // copy the current irp stack location to the next
@@ -1810,13 +1521,8 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
             break;
 
         case IRP_MN_STOP_DEVICE:
-            // stop the device
-            stop_device(DeviceObject);
-
             // select the config descriptor
-            status = (
-                usb_clear_config_desc(DeviceObject)
-            );
+            status = usb_clear_config_desc(DeviceObject);
 
             if (NT_SUCCESS(status)) {
                 // Forward the IRP to the next driver
@@ -1870,19 +1576,10 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
                 status = IofCallDriver(dev_ext->attachedDeviceObject, Irp);
             }
             else {
-                if (dev_ext->total_transfers) {
-                    // mark as unsuccessful
-                    Irp->IoStatus.Status = status = STATUS_UNSUCCESSFUL;
+                dev_ext->is_stopped = true;
+                Irp->IoStatus.Status = status = STATUS_SUCCESS;
 
-                    // mark the irp as complete
-                    IofCompleteRequest(Irp, IO_NO_INCREMENT);
-                }
-                else {
-                    dev_ext->is_stopped = true;
-                    Irp->IoStatus.Status = status = STATUS_SUCCESS;
-
-                    IofCompleteRequest(Irp, IO_NO_INCREMENT);
-                }
+                IofCompleteRequest(Irp, IO_NO_INCREMENT);
             }
 
             // release the spinlock
@@ -1925,7 +1622,6 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
             dev_ext->is_ejecting = true;
 
             // stop the device
-            stop_device(DeviceObject);
             usb_pipe_abort(DeviceObject);
 
             // set the irp status to success

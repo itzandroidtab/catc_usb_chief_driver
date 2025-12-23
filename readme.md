@@ -9,7 +9,7 @@ Some pictures of it working on a 64-bit Windows 11 machine
 ### Open issues
 * The original driver didnt free memory on almost any of the error cases.
 * If the application locks up you need a full reboot before the driver works again
-* Driver has code that looks very janky (looking at you reused event lock value for byte count)
+* Driver has code that looks very janky
 * The software doesnt show anything when a High-Speed USB device is connected (banged my head against that)
 * On some hardware the USB Chief doesnt return anything after the first device descriptor, configuration descriptor requests Windows does (happened Windows server 2019)
 
