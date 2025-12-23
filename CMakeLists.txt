@@ -19,6 +19,7 @@ set(SOURCES
     chief/driver.cpp
     chief/major_functions.cpp
     chief/spinlock.cpp
+    chief/usb.cpp
 )
 
 # add the sources to create the executable
