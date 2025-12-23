@@ -18,7 +18,7 @@ static bool delete_is_not_pending(__in struct _DEVICE_OBJECT *DeviceObject) {
     chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
     
     // return if the device is not being removed or ejected and has a configuration descriptor
-    return !dev_ext->is_ejecting && dev_ext->has_config_desc && !dev_ext->is_removing && !dev_ext->someflag_22;
+    return !dev_ext->is_ejecting && dev_ext->has_config_desc && !dev_ext->is_removing && !dev_ext->is_stopped;
 }
 
 /**
@@ -1058,8 +1058,8 @@ static NTSTATUS usb_clear_config_desc(_DEVICE_OBJECT* DeviceObject) {
         dev_ext->has_config_desc = false;
     }
 
-    // clear the someflag_22 flag. TODO: find out what this is
-    dev_ext->someflag_22 = false;
+    // clear the is_stopped flag
+    dev_ext->is_stopped = false;
 
     return status;
 }
@@ -1878,7 +1878,7 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
                     IofCompleteRequest(Irp, IO_NO_INCREMENT);
                 }
                 else {
-                    dev_ext->someflag_22 = true;
+                    dev_ext->is_stopped = true;
                     Irp->IoStatus.Status = status = STATUS_SUCCESS;
 
                     IofCompleteRequest(Irp, IO_NO_INCREMENT);
@@ -1898,7 +1898,7 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
             }
             else {
                 if (stack->MinorFunction == IRP_MN_CANCEL_STOP_DEVICE) {
-                    dev_ext->someflag_22 = false;
+                    dev_ext->is_stopped = false;
                 }
                 else if (stack->MinorFunction == IRP_MN_CANCEL_REMOVE_DEVICE) {
                     dev_ext->is_removing = false;

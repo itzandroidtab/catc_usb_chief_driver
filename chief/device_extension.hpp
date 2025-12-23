@@ -48,16 +48,14 @@ struct chief_device_extension {
   _KEVENT event1;
   _KEVENT event2;
   _KEVENT power_complete_event;
-  int a1;
   KSPIN_LOCK device_lock;
   LONG InterlockedValue1;
   LONG lock_count;
-  int field_17;
   bool *allocated_pipes;
   chief_transfer *payload;
   volatile bool is_ejecting;
   volatile bool is_removing;
-  volatile bool someflag_22;
+  volatile bool is_stopped;
   volatile bool has_config_desc;
   volatile bool power_1_request_busy;
   volatile bool power_request_busy;
