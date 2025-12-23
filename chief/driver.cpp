@@ -159,8 +159,8 @@ static NTSTATUS add_device(__in struct _DRIVER_OBJECT *DriverObject, __in struct
     // start the device
     io_call_start_device(dev_ext->attachedDeviceObject, &dev_ext->resource);
 
-    // set the initial power state
-    dev_ext->powerstate2 = {PowerSystemUnspecified};
+    // set the current power state to unspecified
+    dev_ext->powerstate2.DeviceState = PowerDeviceUnspecified;
 
     // acquire the spinlock
     spinlock_acquire(device_object);
