@@ -291,10 +291,9 @@ NTSTATUS usb_send_urb(_DEVICE_OBJECT* DeviceObject, PURB Urb) {
 }
 
 NTSTATUS usb_send_receive_vendor_request(_DEVICE_OBJECT* DeviceObject, usb_chief_vendor_request* Request, bool receive) {
-    constexpr static unsigned int size = 0x50;
-
+    // allocate memeory for the urb
     _URB_CONTROL_VENDOR_OR_CLASS_REQUEST * usb = (_URB_CONTROL_VENDOR_OR_CLASS_REQUEST*)ExAllocatePoolWithTag(
-        NonPagedPool, size, 0x206D6457u
+        NonPagedPool, sizeof(_URB_CONTROL_VENDOR_OR_CLASS_REQUEST), 0x206D6457u
     );
 
     // check if we got memory
@@ -317,10 +316,11 @@ NTSTATUS usb_send_receive_vendor_request(_DEVICE_OBJECT* DeviceObject, usb_chief
     }
 
     // initialize the urb
+    memset(usb, 0x00, sizeof(_URB_CONTROL_VENDOR_OR_CLASS_REQUEST));
     usb->Hdr.Function = URB_FUNCTION_VENDOR_DEVICE;
-    usb->Hdr.Length = size;
+    usb->Hdr.Length = sizeof(_URB_CONTROL_VENDOR_OR_CLASS_REQUEST);
     usb->TransferBufferLength = Request->length;
-    usb->TransferBufferMDL = 0;
+    usb->TransferBufferMDL = nullptr;
     usb->TransferBuffer = buffer;
     usb->RequestTypeReservedBits = (
         ((receive ? BMREQUEST_DEVICE_TO_HOST : BMREQUEST_HOST_TO_DEVICE) << 7) |
@@ -329,8 +329,7 @@ NTSTATUS usb_send_receive_vendor_request(_DEVICE_OBJECT* DeviceObject, usb_chief
     usb->Request = Request->Reqeuest & 0xff;
     usb->Value = Request->value;
     usb->Index = Request->index;
-    usb->TransferFlags = receive ? 3 : 0;
-    usb->UrbLink = 0;
+    usb->UrbLink = nullptr;
 
     // send the urb
     NTSTATUS status = usb_send_urb(DeviceObject, (PURB)usb);
@@ -455,18 +454,13 @@ NTSTATUS usb_set_alternate_setting(_DEVICE_OBJECT *deviceObject, PUSB_CONFIGURAT
 }
 
 _URB_BULK_OR_INTERRUPT_TRANSFER* usb_create_bulk_or_interrupt_transfer(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *Irp, USBD_PIPE_INFORMATION* Payload, bool isInDirection) {
-    constexpr static unsigned int size = 0x48;
-
-    // get the device extension
-    chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
-
     // get the amount of data to transfer
     const int length = (Irp->MdlAddress) ? MmGetMdlByteCount(Irp->MdlAddress) : 0;
 
     // create the urb
     _URB_BULK_OR_INTERRUPT_TRANSFER* request = (_URB_BULK_OR_INTERRUPT_TRANSFER*)ExAllocatePoolWithTag(
         NonPagedPool,
-        size,
+        sizeof(_URB_BULK_OR_INTERRUPT_TRANSFER),
         0x206D6457u
     );
 
@@ -475,10 +469,9 @@ _URB_BULK_OR_INTERRUPT_TRANSFER* usb_create_bulk_or_interrupt_transfer(__in stru
         return nullptr;
     }
 
-    memset(request, 0x00, size);
-
     // initialize the urb
-    request->Hdr.Length = size;
+    memset(request, 0x00, sizeof(_URB_BULK_OR_INTERRUPT_TRANSFER));
+    request->Hdr.Length = sizeof(_URB_BULK_OR_INTERRUPT_TRANSFER);
     request->Hdr.Function = URB_FUNCTION_BULK_OR_INTERRUPT_TRANSFER;
     request->PipeHandle = Payload->PipeHandle;
     request->UrbLink = nullptr;
@@ -738,12 +731,10 @@ NTSTATUS usb_bulk_or_interrupt_transfer_complete_1(PDEVICE_OBJECT DeviceObject, 
 }
 
 NTSTATUS usb_sync_reset_pipe_clear_stall(__in struct _DEVICE_OBJECT *DeviceObject, USBD_PIPE_INFORMATION* Pipe) {
-    constexpr static unsigned int size = 0x18;
-
     // create the urb
     _URB_PIPE_REQUEST* request = (_URB_PIPE_REQUEST*)ExAllocatePoolWithTag(
         NonPagedPool,
-        size,
+        sizeof(_URB_PIPE_REQUEST),
         0x206D6457u
     );
 
@@ -753,7 +744,7 @@ NTSTATUS usb_sync_reset_pipe_clear_stall(__in struct _DEVICE_OBJECT *DeviceObjec
     }
 
     // initialize the urb
-    request->Hdr.Length = size;
+    request->Hdr.Length = sizeof(_URB_PIPE_REQUEST);
     request->Hdr.Function = URB_FUNCTION_RESET_PIPE;
     request->PipeHandle = Pipe->PipeHandle;
 
@@ -936,16 +927,13 @@ static NTSTATUS usb_get_configuration_desc(_DEVICE_OBJECT* DeviceObject) {
 }
 
 static NTSTATUS usb_get_device_desc(_DEVICE_OBJECT* DeviceObject) {
-    constexpr static unsigned int size = 0x50;
-    constexpr static unsigned int buffer_size = 0x12;
-
     // get the device extension
     chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
 
     // allocate memory for the URB
     _URB_CONTROL_DESCRIPTOR_REQUEST* usb_request = (_URB_CONTROL_DESCRIPTOR_REQUEST*)ExAllocatePoolWithTag(
         NonPagedPool,
-        size,
+        sizeof(_URB_CONTROL_DESCRIPTOR_REQUEST),
         0x206D6457u
     );
 
@@ -956,7 +944,7 @@ static NTSTATUS usb_get_device_desc(_DEVICE_OBJECT* DeviceObject) {
     // allocate memory for the device descriptor
     USB_DEVICE_DESCRIPTOR* buffer = (USB_DEVICE_DESCRIPTOR*)ExAllocatePoolWithTag(
         NonPagedPool,
-        buffer_size,
+        sizeof(USB_DEVICE_DESCRIPTOR),
         0x206D6457u
     );
 
@@ -967,10 +955,10 @@ static NTSTATUS usb_get_device_desc(_DEVICE_OBJECT* DeviceObject) {
     }
     else {
         // initialize the URB for getting device descriptor
-        memset(usb_request, 0x00, size);
+        memset(usb_request, 0x00, sizeof(_URB_CONTROL_DESCRIPTOR_REQUEST));
         usb_request->Hdr.Function = URB_FUNCTION_GET_DESCRIPTOR_FROM_DEVICE;
-        usb_request->Hdr.Length = size;
-        usb_request->TransferBufferLength = buffer_size;
+        usb_request->Hdr.Length = sizeof(_URB_CONTROL_DESCRIPTOR_REQUEST);
+        usb_request->TransferBufferLength = sizeof(USB_DEVICE_DESCRIPTOR);
         usb_request->TransferBuffer = buffer;
         usb_request->DescriptorType = USB_DEVICE_DESCRIPTOR_TYPE;
         usb_request->Index = 0;
@@ -1007,15 +995,13 @@ static NTSTATUS usb_get_device_desc(_DEVICE_OBJECT* DeviceObject) {
 }
 
 static NTSTATUS usb_clear_config_desc(_DEVICE_OBJECT* DeviceObject) {
-    constexpr static unsigned int size = 0x3c;
-
     // get the device extension
     chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
 
     // allocate memory for the URB
     _URB_SELECT_CONFIGURATION* urb = (_URB_SELECT_CONFIGURATION*)ExAllocatePoolWithTag(
         NonPagedPool,
-        0x3c,
+        sizeof(_URB_SELECT_CONFIGURATION),
         0x206D6457u
     );
 
@@ -1027,7 +1013,7 @@ static NTSTATUS usb_clear_config_desc(_DEVICE_OBJECT* DeviceObject) {
     else {
         // initialize the URB to deselect configuration (set to NULL)
         urb->Hdr.Function = URB_FUNCTION_SELECT_CONFIGURATION;
-        urb->Hdr.Length = 0x3c;
+        urb->Hdr.Length = sizeof(_URB_SELECT_CONFIGURATION);
         urb->ConfigurationDescriptor = nullptr;
 
         // send the urb
