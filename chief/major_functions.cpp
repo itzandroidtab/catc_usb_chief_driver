@@ -1200,7 +1200,7 @@ NTSTATUS mj_read_write_impl(__in struct _DEVICE_OBJECT *DeviceObject, __inout st
         }
 
         // allocate a irp for the transfer
-        PIRP transfer_irp = IoAllocateIrp(DeviceObject->StackSize + 1, FALSE);
+        PIRP transfer_irp = IoAllocateIrp(DeviceObject->StackSize + 1, false);
 
         // check if we got a irp
         if (!transfer_irp) {
