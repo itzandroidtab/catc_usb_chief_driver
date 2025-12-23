@@ -32,7 +32,7 @@ NTSTATUS add_chief_device(PDRIVER_OBJECT driver_object, PDEVICE_OBJECT* device_o
         driver_object,
         sizeof(chief_device_extension),
         &device_name_unicode,
-        FILE_DEVICE_UNKNOWN,
+        FILE_DEVICE_USB,
         0,
         FALSE,
         device_object
