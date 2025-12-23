@@ -443,10 +443,6 @@ NTSTATUS usb_set_alternate_setting(_DEVICE_OBJECT *deviceObject, PUSB_CONFIGURAT
     // send the urb
     NTSTATUS status = usb_send_urb(deviceObject, (PURB)urb);
 
-    // set the usb config handle
-    // TODO: not sure if this changes with the usb_send_urb call
-    dev_ext->usb_config_handle = urb->UrbSelectConfiguration.ConfigurationHandle;
-
     // check if we need to update the interface information
     if (NT_SUCCESS(status)) {
         // TODO: check if free is needed. What if the usb_interface_info is the 
