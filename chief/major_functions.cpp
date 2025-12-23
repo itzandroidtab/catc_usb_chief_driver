@@ -139,11 +139,11 @@ NTSTATUS change_power_state(_DEVICE_OBJECT* DeviceObject, const bool a2) {
     // TODO: figure out what the remainder of this function does. It doesnt
     // make too much sense
     if (a2) {
-        if (dev_ext->lock_count) {
+        if (dev_ext->pipe_open_count) {
             return STATUS_SUCCESS;
         }
     }
-    else if (!dev_ext->lock_count) {
+    else if (!dev_ext->pipe_open_count) {
         return STATUS_SUCCESS;
     }
 
@@ -879,7 +879,7 @@ static NTSTATUS usb_pipe_abort(_DEVICE_OBJECT* DeviceObject) {
         dev_ext->allocated_pipes[i] = false;
 
         // decrement the interlocked value
-        InterlockedDecrement(&dev_ext->lock_count);
+        InterlockedDecrement(&dev_ext->pipe_open_count);
     }
 
     return status;
@@ -1343,7 +1343,7 @@ NTSTATUS mj_create(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP
                 dev_ext->allocated_pipes[pipe_index] = true;
 
                 // increment the interlocked value
-                InterlockedIncrement(&dev_ext->lock_count);
+                InterlockedIncrement(&dev_ext->pipe_open_count);
 
                 // change the power state
                 change_power_state(DeviceObject, false);
@@ -1385,7 +1385,7 @@ NTSTATUS mj_close(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
                 dev_ext->allocated_pipes[pipe_index] = false;
 
                 // decrement the interlocked value
-                InterlockedDecrement(&dev_ext->lock_count);
+                InterlockedDecrement(&dev_ext->pipe_open_count);
             }
         }
     }

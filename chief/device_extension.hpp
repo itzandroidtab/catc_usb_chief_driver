@@ -50,7 +50,7 @@ struct chief_device_extension {
   _KEVENT power_complete_event;
   KSPIN_LOCK device_lock;
   LONG InterlockedValue1;
-  LONG lock_count;
+  LONG pipe_open_count;
   bool *allocated_pipes;
   chief_transfer *payload;
   volatile bool is_ejecting;
