@@ -54,7 +54,7 @@ static NTSTATUS usb_send_urb(_DEVICE_OBJECT* DeviceObject, PURB Urb) {
     return status;
 }
 
-static NTSTATUS usb_bulk_or_interrupt_transfer_complete_0(PDEVICE_OBJECT DeviceObject, PIRP Irp, PVOID Context) {
+static NTSTATUS usb_bulk_or_interrupt_transfer_complete(PDEVICE_OBJECT DeviceObject, PIRP Irp, PVOID Context) {
     // check if we have a pending return
     if (Irp->PendingReturned) {
         IoGetCurrentIrpStackLocation(Irp)->Control |= SL_PENDING_RETURNED;
@@ -162,7 +162,7 @@ NTSTATUS usb_send_bulk_or_interrupt_transfer(__in struct _DEVICE_OBJECT *DeviceO
     stack->MajorFunction = IRP_MJ_INTERNAL_DEVICE_CONTROL;
     stack->Parameters.DeviceIoControl.IoControlCode = IOCTL_INTERNAL_USB_SUBMIT_URB;
     stack->Parameters.Others.Argument1 = request;
-    stack->CompletionRoutine = usb_bulk_or_interrupt_transfer_complete_0;
+    stack->CompletionRoutine = usb_bulk_or_interrupt_transfer_complete;
     stack->Context = DeviceObject;
     stack->Control = SL_INVOKE_ON_SUCCESS | SL_INVOKE_ON_ERROR | SL_INVOKE_ON_CANCEL;
 
