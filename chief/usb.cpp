@@ -5,7 +5,7 @@ extern "C" {
     #include <usbdlib.h>
 }
 
-NTSTATUS usb_send_urb(_DEVICE_OBJECT* DeviceObject, PURB Urb) {
+static NTSTATUS usb_send_urb(_DEVICE_OBJECT* DeviceObject, PURB Urb) {
     // get the device extension
     chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
 
