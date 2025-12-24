@@ -21,55 +21,50 @@ jobs:
     - name: Setup MSBuild
       uses: microsoft/setup-msbuild@v2
     
-    - name: Install Windows Driver Kit (WDK)
+    - name: Install Windows DDK 7.1.0 (7600.16385.1)
       shell: powershell
       run: |
-        Write-Host "Installing WDK..."
-        # Download WDK installer
-        $wdkUrl = "https://go.microsoft.com/fwlink/?linkid=2249371"
-        $wdkInstaller = "$env:TEMP\wdksetup.exe"
-        Invoke-WebRequest -Uri $wdkUrl -OutFile $wdkInstaller
+        Write-Host "Downloading Windows DDK 7.1.0..."
+        # Download Windows 7 WDK ISO (version 7600.16385.1)
+        $ddkUrl = "https://download.microsoft.com/download/4/A/2/4A25C7D5-EFBE-4182-B6A9-AE6850409A78/GRMWDK_EN_7600_1.ISO"
+        $ddkIso = "$env:TEMP\GRMWDK_EN_7600_1.ISO"
+        Invoke-WebRequest -Uri $ddkUrl -OutFile $ddkIso -UseBasicParsing
         
-        # Install WDK silently
-        Start-Process -FilePath $wdkInstaller -ArgumentList "/quiet", "/norestart" -Wait
+        Write-Host "Mounting ISO..."
+        $mount = Mount-DiskImage -ImagePath $ddkIso -PassThru
+        $driveLetter = ($mount | Get-Volume).DriveLetter
         
-        Write-Host "WDK installation complete"
+        Write-Host "Installing DDK from ${driveLetter}:..."
+        $setupPath = "${driveLetter}:\KitSetup.exe"
+        
+        # Install DDK silently to C:\WinDDK\7600.16385.1
+        Start-Process -FilePath $setupPath -ArgumentList "/auto", "C:\WinDDK\7600.16385.1" -Wait -NoNewWindow
+        
+        Write-Host "Dismounting ISO..."
+        Dismount-DiskImage -ImagePath $ddkIso
+        
+        Write-Host "DDK installation complete"
     
     - name: Setup CMake
       uses: jwlawson/actions-setup-cmake@v2
       with:
         cmake-version: '3.27.x'
     
-    - name: Locate WDK installation
+    - name: Locate DDK installation
       id: wdk-path
       shell: powershell
       run: |
-        # Common WDK installation paths
-        $wdkPaths = @(
-          "C:\Program Files (x86)\Windows Kits\10",
-          "C:\Program Files\Windows Kits\10"
-        )
+        # Check for Windows 7 DDK installation
+        $ddkPath = "C:\WinDDK\7600.16385.1"
         
-        foreach ($path in $wdkPaths) {
-          if (Test-Path $path) {
-            $includeDir = Join-Path $path "Include"
-            if (Test-Path $includeDir) {
-              # Find the latest version
-              $versions = Get-ChildItem $includeDir -Directory | Sort-Object Name -Descending
-              if ($versions.Count -gt 0) {
-                $latestVersion = $versions[0].Name
-                $wdkRoot = $path
-                Write-Host "Found WDK at: $wdkRoot (version: $latestVersion)"
-                echo "WDK_ROOT=$wdkRoot" >> $env:GITHUB_OUTPUT
-                echo "WDK_VERSION=$latestVersion" >> $env:GITHUB_OUTPUT
-                exit 0
-              }
-            }
-          }
+        if (Test-Path $ddkPath) {
+          Write-Host "Found DDK at: $ddkPath"
+          echo "WDK_ROOT=$ddkPath" >> $env:GITHUB_OUTPUT
+          echo "WDK_VERSION=7600.16385.1" >> $env:GITHUB_OUTPUT
+        } else {
+          Write-Error "DDK not found at $ddkPath"
+          exit 1
         }
-        
-        Write-Error "WDK not found"
-        exit 1
     
     - name: Configure CMake (x64)
       if: matrix.arch == 'x64'
