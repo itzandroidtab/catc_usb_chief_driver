@@ -109,12 +109,10 @@ static NTSTATUS change_power_state_impl(_DEVICE_OBJECT* DeviceObject, const POWE
 
         // TODO: why is this not using the status from the completion routine?
         status = STATUS_SUCCESS;
-
-        // TODO: if the status is not pending this variable will never 
-        // be cleared. This doesnt look correct. This might need to be
-        // done in the completion routine instead
-        dev_ext->power_request_busy = false;
     }
+
+    // clear the power request busy flag
+    dev_ext->power_request_busy = false;
 
     return status;
 }
