@@ -629,6 +629,7 @@ NTSTATUS mj_power(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
                             // get the next irp stack location
                             PIO_STACK_LOCATION stack = IoGetNextIrpStackLocation(Irp);
 
+                            // the callback will handle releasing the spinlock
                             stack->CompletionRoutine = power_state_systemworking_complete;
                             stack->Context = DeviceObject;
                             stack->Control = SL_INVOKE_ON_SUCCESS | SL_INVOKE_ON_ERROR | SL_INVOKE_ON_CANCEL;
@@ -653,10 +654,8 @@ NTSTATUS mj_power(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
                     break;
 
                 default:
-                    // TODO: there was a bug here in the driver. The spinlock 
-                    // is was not being released. This would make it so the
-                    // driver will never be deleted
-                    status = STATUS_INVALID_PARAMETER_1;
+                    // return sucess. Still release the spinlock below
+                    status = STATUS_SUCCESS;
                     break;
             }
             break;
