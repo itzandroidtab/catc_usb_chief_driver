@@ -67,11 +67,6 @@ jobs:
         
         Write-Host "DDK installation complete"
     
-    - name: Setup CMake
-      uses: jwlawson/actions-setup-cmake@v2
-      with:
-        cmake-version: '3.27.x'
-    
     - name: Locate DDK installation
       id: wdk-path
       shell: powershell
