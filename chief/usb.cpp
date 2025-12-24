@@ -173,16 +173,6 @@ NTSTATUS usb_send_bulk_or_interrupt_transfer(__in struct _DEVICE_OBJECT *DeviceO
 }
 
 NTSTATUS usb_send_receive_vendor_request(_DEVICE_OBJECT* DeviceObject, usb_chief_vendor_request* Request, bool receive) {
-    // allocate memeory for the urb
-    _URB_CONTROL_VENDOR_OR_CLASS_REQUEST * usb = (_URB_CONTROL_VENDOR_OR_CLASS_REQUEST*)ExAllocatePoolWithTag(
-        NonPagedPool, sizeof(_URB_CONTROL_VENDOR_OR_CLASS_REQUEST), 0x206D6457u
-    );
-
-    // check if we got memory
-    if (!usb) {
-        return STATUS_INSUFFICIENT_RESOURCES;
-    }
-
     void* buffer = nullptr;
 
     // check if we need to allocate memeory
@@ -198,41 +188,39 @@ NTSTATUS usb_send_receive_vendor_request(_DEVICE_OBJECT* DeviceObject, usb_chief
     }
 
     // initialize the urb
-    memset(usb, 0x00, sizeof(_URB_CONTROL_VENDOR_OR_CLASS_REQUEST));
-    usb->Hdr.Function = URB_FUNCTION_VENDOR_DEVICE;
-    usb->Hdr.Length = sizeof(_URB_CONTROL_VENDOR_OR_CLASS_REQUEST);
-    usb->TransferBufferLength = Request->length;
-    usb->TransferBufferMDL = nullptr;
-    usb->TransferBuffer = buffer;
-    usb->RequestTypeReservedBits = (
+    _URB_CONTROL_VENDOR_OR_CLASS_REQUEST usb = {};
+    usb.Hdr.Function = URB_FUNCTION_VENDOR_DEVICE;
+    usb.Hdr.Length = sizeof(_URB_CONTROL_VENDOR_OR_CLASS_REQUEST);
+    usb.TransferBufferLength = Request->length;
+    usb.TransferBufferMDL = nullptr;
+    usb.TransferBuffer = buffer;
+    usb.RequestTypeReservedBits = (
         ((receive ? BMREQUEST_DEVICE_TO_HOST : BMREQUEST_HOST_TO_DEVICE) << 7) |
         (BMREQUEST_VENDOR << 5) | BMREQUEST_TO_DEVICE
     );
-    usb->Request = Request->Reqeuest & 0xff;
-    usb->Value = Request->value;
-    usb->Index = Request->index;
-    usb->TransferFlags = (
+    usb.Request = Request->Reqeuest & 0xff;
+    usb.Value = Request->value;
+    usb.Index = Request->index;
+    usb.TransferFlags = (
         receive ? (USBD_TRANSFER_DIRECTION_IN | USBD_SHORT_TRANSFER_OK) : (USBD_TRANSFER_DIRECTION_OUT)
     );
-    usb->UrbLink = nullptr;
+    usb.UrbLink = nullptr;
 
     // send the urb
-    NTSTATUS status = usb_send_urb(DeviceObject, (PURB)usb);
+    NTSTATUS status = usb_send_urb(DeviceObject, (PURB)&usb);
 
     // check if we need to copy data back
     if (NT_SUCCESS(status) && receive && buffer) {
         // update the request length
-        Request->length = usb->TransferBufferLength & 0xffff;
+        Request->length = usb.TransferBufferLength & 0xffff;
 
         // copy the data back to the request structure
-        memcpy(Request->data, buffer, usb->TransferBufferLength);
+        memcpy(Request->data, buffer, usb.TransferBufferLength);
     }
 
     if (buffer) {
         ExFreePool(buffer);
     }
-
-    ExFreePool(usb);
 
     return status;
 }
@@ -454,32 +442,17 @@ NTSTATUS usb_reset_if_not_enabled_but_conected(_DEVICE_OBJECT* DeviceObject) {
     return res;
 }
 
-
-
 NTSTATUS usb_sync_reset_pipe_clear_stall(__in struct _DEVICE_OBJECT *DeviceObject, USBD_PIPE_INFORMATION* Pipe) {
     // create the urb
-    _URB_PIPE_REQUEST* request = (_URB_PIPE_REQUEST*)ExAllocatePoolWithTag(
-        NonPagedPool,
-        sizeof(_URB_PIPE_REQUEST),
-        0x206D6457u
-    );
-
-    // check if we got memory
-    if (!request) {
-        return STATUS_INSUFFICIENT_RESOURCES;
-    }
+    _URB_PIPE_REQUEST request = {};
 
     // initialize the urb
-    request->Hdr.Length = sizeof(_URB_PIPE_REQUEST);
-    request->Hdr.Function = URB_FUNCTION_RESET_PIPE;
-    request->PipeHandle = Pipe->PipeHandle;
+    request.Hdr.Length = sizeof(_URB_PIPE_REQUEST);
+    request.Hdr.Function = URB_FUNCTION_RESET_PIPE;
+    request.PipeHandle = Pipe->PipeHandle;
 
     // send the urb
-    NTSTATUS status = usb_send_urb(DeviceObject, (PURB)request);
-
-    ExFreePool(request);
-
-    return status;
+    return usb_send_urb(DeviceObject, (PURB)&request);
 }
 
 NTSTATUS usb_pipe_abort(_DEVICE_OBJECT* DeviceObject) {
@@ -500,28 +473,15 @@ NTSTATUS usb_pipe_abort(_DEVICE_OBJECT* DeviceObject) {
         if (!dev_ext->allocated_pipes[i]) {
             continue;
         }
-
-        // allocate memory for the URB
-        _URB_PIPE_REQUEST* urb = (_URB_PIPE_REQUEST*)ExAllocatePoolWithTag(
-            NonPagedPool,
-            sizeof(_URB_PIPE_REQUEST),
-            0x206D6457u
-        );
-
-        if (!urb) {
-            return STATUS_INSUFFICIENT_RESOURCES;
-        }
-
+        
         // initialize the URB for abort pipe
-        urb->Hdr.Length = sizeof(_URB_PIPE_REQUEST);
-        urb->Hdr.Function = URB_FUNCTION_ABORT_PIPE;
-        urb->PipeHandle = interface_info->Pipes[i].PipeHandle;
+        _URB_PIPE_REQUEST urb = {};
+        urb.Hdr.Length = sizeof(_URB_PIPE_REQUEST);
+        urb.Hdr.Function = URB_FUNCTION_ABORT_PIPE;
+        urb.PipeHandle = interface_info->Pipes[i].PipeHandle;
 
         // send the URB
-        status = usb_send_urb(DeviceObject, (PURB)urb);
-
-        // free the URB
-        ExFreePool(urb);
+        status = usb_send_urb(DeviceObject, (PURB)&urb);
 
         // check if we have an error
         if (!NT_SUCCESS(status)) {
@@ -538,173 +498,109 @@ NTSTATUS usb_pipe_abort(_DEVICE_OBJECT* DeviceObject) {
     return status;
 }
 
-NTSTATUS usb_get_configuration_desc(_DEVICE_OBJECT* DeviceObject) {
+NTSTATUS usb_get_configuration_desc(_DEVICE_OBJECT* DeviceObject, PUSB_CONFIGURATION_DESCRIPTOR& OutDescriptor) {
     // get the device extension
     chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
 
-    // allocate memory for the URB
-    _URB_CONTROL_DESCRIPTOR_REQUEST* urb = (_URB_CONTROL_DESCRIPTOR_REQUEST*)ExAllocatePoolWithTag(
-        NonPagedPool,
-        sizeof(_URB_CONTROL_DESCRIPTOR_REQUEST),
-        0x206D6457u
-    );
+    // initial buffer size. This will be increased if needed
+    ULONG buffer_size = 64;
 
-    if (!urb) {
-        return STATUS_INSUFFICIENT_RESOURCES;
-    }
+    // initialize status
+    NTSTATUS status = STATUS_SUCCESS;
 
-    // clear the URB memory
-    memset(urb, 0x00, sizeof(_URB_CONTROL_DESCRIPTOR_REQUEST));
-
-    // start with an initial buffer size of 521 bytes
-    // TODO: why 521? The actual descriptor is 55 bytes long if 
-    // I check with a USB sniffer
-    ULONG buffer_size = 521;
+    // the descriptor pointer
+    PUSB_CONFIGURATION_DESCRIPTOR descriptor = nullptr;
 
     while (true) {
         // allocate memory for the configuration descriptor
-        PUSB_CONFIGURATION_DESCRIPTOR descriptor = (PUSB_CONFIGURATION_DESCRIPTOR)ExAllocatePoolWithTag(
+        descriptor = (PUSB_CONFIGURATION_DESCRIPTOR)ExAllocatePoolWithTag(
             NonPagedPool,
             buffer_size,
             0x206D6457u
         );
 
-        dev_ext->usb_config_desc = descriptor;
-
+        // check if we got memory
         if (!descriptor) {
-            ExFreePool(urb);
-            return STATUS_INSUFFICIENT_RESOURCES;
-        }
-
-        // initialize the URB for getting configuration descriptor
-        urb->Hdr.Function = URB_FUNCTION_GET_DESCRIPTOR_FROM_DEVICE;
-        urb->Hdr.Length = sizeof(_URB_CONTROL_DESCRIPTOR_REQUEST);
-        urb->TransferBufferLength = buffer_size;
-        urb->TransferBufferMDL = nullptr;
-        urb->TransferBuffer = dev_ext->usb_config_desc;
-        urb->DescriptorType = USB_CONFIGURATION_DESCRIPTOR_TYPE;
-        urb->Index = 0;
-        urb->LanguageId = 0;
-        urb->UrbLink = nullptr;
-
-        // send the URB
-        usb_send_urb(DeviceObject, (PURB)urb);
-
-        // check if we got the complete descriptor
-        // if TransferBufferLength is 0 or the total length fits in our buffer, we're done
-        if (!urb->TransferBufferLength || dev_ext->usb_config_desc->wTotalLength <= buffer_size) {
+            status = STATUS_INSUFFICIENT_RESOURCES;
             break;
         }
 
+        // initialize the URB for getting configuration descriptor
+        _URB_CONTROL_DESCRIPTOR_REQUEST urb = {};
+        urb.Hdr.Function = URB_FUNCTION_GET_DESCRIPTOR_FROM_DEVICE;
+        urb.Hdr.Length = sizeof(_URB_CONTROL_DESCRIPTOR_REQUEST);
+        urb.TransferBufferLength = buffer_size;
+        urb.TransferBufferMDL = nullptr;
+        urb.TransferBuffer = reinterpret_cast<void*>(descriptor);
+        urb.DescriptorType = USB_CONFIGURATION_DESCRIPTOR_TYPE;
+        urb.Index = 0;
+        urb.LanguageId = 0;
+        urb.UrbLink = nullptr;
+
+        // send the URB
+        status = usb_send_urb(DeviceObject, (PURB)&urb);
+
+        // check if we got an error
+        if (!NT_SUCCESS(status)) {
+            // free the descriptor memory
+            ExFreePool(descriptor);
+            descriptor = nullptr;
+            break;
+        }
+
+        // check if we got the complete descriptor
+        // if TransferBufferLength is 0 or the total length fits in our buffer, we're done
+        if (!urb.TransferBufferLength || descriptor->wTotalLength <= buffer_size) {
+            break;
+        }
+
+        // update the buffer size to the total length
+        buffer_size = descriptor->wTotalLength;
+
         // we need a larger buffer, free the current one and try again
-        buffer_size = dev_ext->usb_config_desc->wTotalLength;
-        ExFreePool(dev_ext->usb_config_desc);
-        dev_ext->usb_config_desc = nullptr;
+        ExFreePool(descriptor);
+        descriptor = nullptr;
     }
 
-    // free the URB
-    ExFreePool(urb);
+    // store the descriptor. If we failed, descriptor will be nullptr
+    OutDescriptor = descriptor;
 
     // set the alternate setting to 0
-    return usb_set_alternate_setting(DeviceObject, dev_ext->usb_config_desc, 0);
+    return status;
 }
 
-NTSTATUS usb_get_device_desc(_DEVICE_OBJECT* DeviceObject) {
+NTSTATUS usb_get_device_desc(_DEVICE_OBJECT* DeviceObject, USB_DEVICE_DESCRIPTOR& OutDescriptor) {
     // get the device extension
     chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
 
-    // allocate memory for the URB
-    _URB_CONTROL_DESCRIPTOR_REQUEST* usb_request = (_URB_CONTROL_DESCRIPTOR_REQUEST*)ExAllocatePoolWithTag(
-        NonPagedPool,
-        sizeof(_URB_CONTROL_DESCRIPTOR_REQUEST),
-        0x206D6457u
-    );
+    // create a usb request
+    _URB_CONTROL_DESCRIPTOR_REQUEST usb_request = {};
 
-    if (!usb_request) {
-        return STATUS_INSUFFICIENT_RESOURCES;
-    }
+    // initialize the URB for getting device descriptor
+    usb_request.Hdr.Function = URB_FUNCTION_GET_DESCRIPTOR_FROM_DEVICE;
+    usb_request.Hdr.Length = sizeof(_URB_CONTROL_DESCRIPTOR_REQUEST);
+    usb_request.TransferBufferLength = sizeof(USB_DEVICE_DESCRIPTOR);
+    usb_request.TransferBuffer = reinterpret_cast<void*>(&OutDescriptor);
+    usb_request.DescriptorType = USB_DEVICE_DESCRIPTOR_TYPE;
+    usb_request.Index = 0;
+    usb_request.LanguageId = 0;
 
-    // allocate memory for the device descriptor
-    USB_DEVICE_DESCRIPTOR* buffer = (USB_DEVICE_DESCRIPTOR*)ExAllocatePoolWithTag(
-        NonPagedPool,
-        sizeof(USB_DEVICE_DESCRIPTOR),
-        0x206D6457u
-    );
-
-    NTSTATUS status;
-
-    if (!buffer) {
-        status = STATUS_INSUFFICIENT_RESOURCES;
-    }
-    else {
-        // initialize the URB for getting device descriptor
-        memset(usb_request, 0x00, sizeof(_URB_CONTROL_DESCRIPTOR_REQUEST));
-        usb_request->Hdr.Function = URB_FUNCTION_GET_DESCRIPTOR_FROM_DEVICE;
-        usb_request->Hdr.Length = sizeof(_URB_CONTROL_DESCRIPTOR_REQUEST);
-        usb_request->TransferBufferLength = sizeof(USB_DEVICE_DESCRIPTOR);
-        usb_request->TransferBuffer = buffer;
-        usb_request->DescriptorType = USB_DEVICE_DESCRIPTOR_TYPE;
-        usb_request->Index = 0;
-        usb_request->LanguageId = 0;
-
-        // send the URB
-        status = usb_send_urb(DeviceObject, (PURB)usb_request);
-    }
-
-    // check if we have an error
-    if (!NT_SUCCESS(status)) {
-        if (buffer) {
-            ExFreePool(buffer);
-        }
-    }
-    else {
-        // store the device descriptor in the device extension
-        dev_ext->usb_device_desc = buffer;
-    }
-
-    // free the URB
-    ExFreePool(usb_request);
-
-    // if successful, get the configuration descriptor
-    if (NT_SUCCESS(status)) {
-        status = usb_get_configuration_desc(DeviceObject);
-        
-        if (NT_SUCCESS(status)) {
-            dev_ext->has_config_desc = true;
-        }
-    }
-
-    return status;
+    // send the URB
+    return usb_send_urb(DeviceObject, (PURB)&usb_request);;
 }
 
 NTSTATUS usb_clear_config_desc(_DEVICE_OBJECT* DeviceObject) {
     // get the device extension
     chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
 
-    // allocate memory for the URB
-    _URB_SELECT_CONFIGURATION* urb = (_URB_SELECT_CONFIGURATION*)ExAllocatePoolWithTag(
-        NonPagedPool,
-        sizeof(_URB_SELECT_CONFIGURATION),
-        0x206D6457u
-    );
+    // initialize the URB to deselect configuration (set to NULL)
+    _URB_SELECT_CONFIGURATION urb = {};
+    urb.Hdr.Function = URB_FUNCTION_SELECT_CONFIGURATION;
+    urb.Hdr.Length = sizeof(_URB_SELECT_CONFIGURATION);
+    urb.ConfigurationDescriptor = nullptr;
 
-    NTSTATUS status;
-
-    if (!urb) {
-        status = STATUS_INSUFFICIENT_RESOURCES;
-    }
-    else {
-        // initialize the URB to deselect configuration (set to NULL)
-        urb->Hdr.Function = URB_FUNCTION_SELECT_CONFIGURATION;
-        urb->Hdr.Length = sizeof(_URB_SELECT_CONFIGURATION);
-        urb->ConfigurationDescriptor = nullptr;
-
-        // send the urb
-        status = usb_send_urb(DeviceObject, (PURB)urb);
-
-        // free the URB
-        ExFreePool(urb);
-    }
+    // send the urb
+    const NTSTATUS status = usb_send_urb(DeviceObject, (PURB)&urb);
 
     // if successful, mark that we no longer have a config descriptor
     if (NT_SUCCESS(status)) {

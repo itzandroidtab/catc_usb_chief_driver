@@ -246,11 +246,8 @@ static NTSTATUS usb_cleanup_memory(_DEVICE_OBJECT* DeviceObject) {
     // get the device extension
     chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
     
-    // free all the allocated usb memory
-    if (dev_ext->usb_device_desc) {
-        ExFreePool(dev_ext->usb_device_desc);
-        dev_ext->usb_device_desc = nullptr;
-    }
+    // clear the bcdUSB value
+    dev_ext->bcdUSB.clear();
 
     // free the allocated pipes
     if (dev_ext->allocated_pipes) {
@@ -454,9 +451,9 @@ NTSTATUS mj_device_control(__in struct _DEVICE_OBJECT *DeviceObject, __inout str
                 status = usb_set_alternate_setting(DeviceObject, dev_ext->usb_config_desc, vendor_request->Reqeuest & 0xff);
                 break;
             case CTL_CODE(FILE_DEVICE_USB, 3, METHOD_BUFFERED, FILE_ANY_ACCESS): // 0x22000c
-                if (dev_ext->usb_device_desc) {
+                if (dev_ext->bcdUSB.has_value()) {
                     // copy the bcdUSB value to the vendor request
-                    vendor_request->Reqeuest = dev_ext->usb_device_desc->bcdUSB;
+                    vendor_request->Reqeuest = dev_ext->bcdUSB.has_value();
 
                     // set the length to 2 bytes
                     Irp->IoStatus.Information = 2;
@@ -761,7 +758,37 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
                 }
 
                 if (NT_SUCCESS(status)) {
-                    status = usb_get_device_desc(DeviceObject);
+                    // get the device descriptor
+                    USB_DEVICE_DESCRIPTOR device_desc;
+
+                    // get the device descriptor
+                    status = usb_get_device_desc(DeviceObject, device_desc);
+
+                    // check if we got the device descriptor
+                    if (NT_SUCCESS(status)) {
+                        // store the bcdUSB value
+                        dev_ext->bcdUSB.set(device_desc.bcdUSB);
+
+                        // try to get the configuration descriptor
+                        status = usb_get_configuration_desc(DeviceObject, dev_ext->usb_config_desc);
+
+                        // mark if we have a config descriptor
+                        if (NT_SUCCESS(status)) {
+                            dev_ext->has_config_desc = true;
+
+                            // set the alternate setting to 0
+                            status = usb_set_alternate_setting(DeviceObject, dev_ext->usb_config_desc, 0);
+                        }
+                        else {
+                            dev_ext->has_config_desc = false;
+                        }
+                    }
+                    else {
+                        // if we failed to get the device descriptor 
+                        // clear the bcdUSB value
+                        dev_ext->bcdUSB.clear();
+                    }
+
                     Irp->IoStatus.Status = status;
                 }
 
