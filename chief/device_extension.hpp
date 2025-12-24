@@ -6,6 +6,8 @@ extern "C" {
     #include <usbdi.h>
 }
 
+#include "maybe.hpp"
+
 struct usb_chief_vendor_request {
     unsigned short Reqeuest;
     unsigned short value;
@@ -22,8 +24,7 @@ struct chief_device_extension {
   PDEVICE_OBJECT attachedDeviceObject;
   PDEVICE_OBJECT physicalDeviceObject;
   POWER_STATE current_power_state;
-  USB_CONFIGURATION_DESCRIPTOR *usb_config_desc;
-  USB_DEVICE_DESCRIPTOR *usb_device_desc;
+  PUSB_CONFIGURATION_DESCRIPTOR usb_config_desc;
   PUSBD_INTERFACE_INFORMATION usb_interface_info;
   DEVICE_CAPABILITIES device_capabilities;
   IRP *power_irp;
@@ -43,5 +44,8 @@ struct chief_device_extension {
   volatile bool power_1_request_busy;
   volatile bool power_request_busy;
   POWER_STATE target_power_state;
+
+  // The BCD version of the connected USB device
+  maybe<unsigned short> bcdUSB;
 };
 

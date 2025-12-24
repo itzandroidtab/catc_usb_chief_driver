@@ -64,6 +64,9 @@ NTSTATUS add_chief_device(PDRIVER_OBJECT driver_object, PDEVICE_OBJECT* device_o
     dev_ext->allocated_pipes = nullptr;
     dev_ext->usb_interface_info = nullptr;
 
+    // create a maybe<unsigned short> for bcdUSB
+    dev_ext->bcdUSB = maybe<unsigned short>();
+
     return status;
 }
 
