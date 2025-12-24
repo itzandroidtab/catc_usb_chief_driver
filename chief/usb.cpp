@@ -184,7 +184,6 @@ NTSTATUS usb_send_receive_vendor_request(_DEVICE_OBJECT* DeviceObject, usb_chief
         buffer = ExAllocatePoolWithTag(NonPagedPool, Request->length, 0x206D6457u);
 
         if (!buffer) {
-            // TODO: this should free the usb variable before exiting
             return STATUS_INSUFFICIENT_RESOURCES;
         }
 
