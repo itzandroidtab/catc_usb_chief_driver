@@ -1,0 +1,120 @@
+name: Build USB Chief Driver
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    
+    strategy:
+      matrix:
+        arch: [x64, x86]
+        configuration: [Debug, Release]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup MSBuild
+      uses: microsoft/setup-msbuild@v2
+    
+    - name: Install Windows Driver Kit (WDK)
+      shell: powershell
+      run: |
+        Write-Host "Installing WDK..."
+        # Download WDK installer
+        $wdkUrl = "https://go.microsoft.com/fwlink/?linkid=2249371"
+        $wdkInstaller = "$env:TEMP\wdksetup.exe"
+        Invoke-WebRequest -Uri $wdkUrl -OutFile $wdkInstaller
+        
+        # Install WDK silently
+        Start-Process -FilePath $wdkInstaller -ArgumentList "/quiet", "/norestart" -Wait
+        
+        Write-Host "WDK installation complete"
+    
+    - name: Setup CMake
+      uses: jwlawson/actions-setup-cmake@v2
+      with:
+        cmake-version: '3.27.x'
+    
+    - name: Locate WDK installation
+      id: wdk-path
+      shell: powershell
+      run: |
+        # Common WDK installation paths
+        $wdkPaths = @(
+          "C:\Program Files (x86)\Windows Kits\10",
+          "C:\Program Files\Windows Kits\10"
+        )
+        
+        foreach ($path in $wdkPaths) {
+          if (Test-Path $path) {
+            $includeDir = Join-Path $path "Include"
+            if (Test-Path $includeDir) {
+              # Find the latest version
+              $versions = Get-ChildItem $includeDir -Directory | Sort-Object Name -Descending
+              if ($versions.Count -gt 0) {
+                $latestVersion = $versions[0].Name
+                $wdkRoot = $path
+                Write-Host "Found WDK at: $wdkRoot (version: $latestVersion)"
+                echo "WDK_ROOT=$wdkRoot" >> $env:GITHUB_OUTPUT
+                echo "WDK_VERSION=$latestVersion" >> $env:GITHUB_OUTPUT
+                exit 0
+              }
+            }
+          }
+        }
+        
+        Write-Error "WDK not found"
+        exit 1
+    
+    - name: Configure CMake (x64)
+      if: matrix.arch == 'x64'
+      shell: powershell
+      run: |
+        $wdkRoot = "${{ steps.wdk-path.outputs.WDK_ROOT }}"
+        $wdkVersion = "${{ steps.wdk-path.outputs.WDK_VERSION }}"
+        
+        # Set up environment for x64 build
+        cmake -B build `
+          -G "Visual Studio 17 2022" `
+          -A x64 `
+          -DSDK_ROOT="$wdkRoot" `
+          -DCMAKE_BUILD_TYPE=${{ matrix.configuration }}
+    
+    - name: Configure CMake (x86)
+      if: matrix.arch == 'x86'
+      shell: powershell
+      run: |
+        $wdkRoot = "${{ steps.wdk-path.outputs.WDK_ROOT }}"
+        $wdkVersion = "${{ steps.wdk-path.outputs.WDK_VERSION }}"
+        
+        # Set up environment for x86 build
+        cmake -B build `
+          -G "Visual Studio 17 2022" `
+          -A Win32 `
+          -DSDK_ROOT="$wdkRoot" `
+          -DCMAKE_BUILD_TYPE=${{ matrix.configuration }}
+    
+    - name: Build driver
+      shell: powershell
+      run: |
+        cmake --build build --config ${{ matrix.configuration }} -j 4
+    
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: usbchief-${{ matrix.arch }}-${{ matrix.configuration }}
+        path: |
+          build/${{ matrix.configuration }}/usbchief.sys
+          build/${{ matrix.configuration }}/usbchief.pdb
+        if-no-files-found: error
+    
+    - name: List build output
+      shell: powershell
+      run: |
+        Write-Host "Build directory contents:"
+        Get-ChildItem -Recurse build | Select-Object FullName
