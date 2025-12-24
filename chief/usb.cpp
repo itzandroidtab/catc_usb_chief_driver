@@ -312,8 +312,7 @@ NTSTATUS usb_set_alternate_setting(_DEVICE_OBJECT *deviceObject, PUSB_CONFIGURAT
 
     // check if we need to update the interface information
     if (NT_SUCCESS(status)) {
-        // TODO: check if free is needed. What if the usb_interface_info is the 
-        // same size? Big chance it is
+        // check if we need to free the old usb interface info
         if (dev_ext->usb_interface_info) {
             ExFreePool(dev_ext->usb_interface_info);
         }
