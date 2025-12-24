@@ -1,0 +1,134 @@
+name: Build USB Chief Driver
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    
+    strategy:
+      matrix:
+        arch: [x64, x86]
+        configuration: [Debug, Release]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup MSBuild
+      uses: microsoft/setup-msbuild@v2
+    
+    - name: Cache Windows DDK ISO
+      id: cache-ddk-iso
+      uses: actions/cache@v4
+      with:
+        path: ${{ runner.temp }}\GRMWDK_EN_7600_1.ISO
+        key: winddk-iso-7600.16385.1
+    
+    - name: Download Windows DDK ISO
+      if: steps.cache-ddk-iso.outputs.cache-hit != 'true'
+      shell: powershell
+      run: |
+        Write-Host "Downloading Windows DDK 7.1.0 ISO..."
+        $ddkUrl = "https://download.microsoft.com/download/4/A/2/4A25C7D5-EFBE-4182-B6A9-AE6850409A78/GRMWDK_EN_7600_1.ISO"
+        $ddkIso = "$env:RUNNER_TEMP\GRMWDK_EN_7600_1.ISO"
+        
+        # Use curl for faster, more reliable download
+        curl.exe -L -o $ddkIso $ddkUrl --progress-bar --max-time 900 --retry 3
+        
+        if (Test-Path $ddkIso) {
+          Write-Host "Download complete. File size: $((Get-Item $ddkIso).Length / 1MB) MB"
+        } else {
+          Write-Error "Download failed - file not found"
+          exit 1
+        }
+    
+    - name: Install Windows DDK 7.1.0 (7600.16385.1)
+      shell: powershell
+      run: |
+        $ddkIso = "$env:RUNNER_TEMP\GRMWDK_EN_7600_1.ISO"
+        Write-Host "Using DDK ISO at: $ddkIso"
+        
+        Write-Host "Mounting ISO..."
+        $mount = Mount-DiskImage -ImagePath $ddkIso -PassThru
+        $driveLetter = ($mount | Get-Volume).DriveLetter
+        
+        Write-Host "Installing DDK from ${driveLetter}:..."
+        $setupPath = "${driveLetter}:\KitSetup.exe"
+        
+        # Install DDK fully unattended - /ui-level EXPRESS skips confirmation prompts
+        & $setupPath /install "{45292B3D-2D37-4048-494A-4B4C4D4E4F50}" /ui-level EXPRESS /no-view /install-location ${{github.workspace}} 2>&1 | Out-Host
+
+        ls ${{github.workspace}}
+        
+        Write-Host "Dismounting ISO..."
+        Dismount-DiskImage -ImagePath $ddkIso
+        
+        Write-Host "DDK installation complete"
+    
+    - name: Locate DDK installation
+      id: wdk-path
+      shell: powershell
+      run: |
+        # Check for Windows 7 DDK installation
+        $ddkPath = "${{github.workspace}}\7600.16385.1"
+        
+        if (Test-Path $ddkPath) {
+          Write-Host "Found DDK at: $ddkPath"
+          echo "WDK_ROOT=$ddkPath" >> $env:GITHUB_OUTPUT
+          echo "WDK_VERSION=7600.16385.1" >> $env:GITHUB_OUTPUT
+        } else {
+          Write-Error "DDK not found at $ddkPath"
+          exit 1
+        }
+    
+    - name: Configure CMake (x64)
+      if: matrix.arch == 'x64'
+      shell: powershell
+      run: |
+        $wdkRoot = "${{ steps.wdk-path.outputs.WDK_ROOT }}"
+        $wdkVersion = "${{ steps.wdk-path.outputs.WDK_VERSION }}"
+        
+        # Set up environment for x64 build
+        cmake -B build `
+          -G "Visual Studio 17 2022" `
+          -A x64 `
+          -DSDK_ROOT="$wdkRoot" `
+          -DCMAKE_BUILD_TYPE=${{ matrix.configuration }}
+    
+    - name: Configure CMake (x86)
+      if: matrix.arch == 'x86'
+      shell: powershell
+      run: |
+        $wdkRoot = "${{ steps.wdk-path.outputs.WDK_ROOT }}"
+        $wdkVersion = "${{ steps.wdk-path.outputs.WDK_VERSION }}"
+        
+        # Set up environment for x86 build
+        cmake -B build `
+          -G "Visual Studio 17 2022" `
+          -A Win32 `
+          -DSDK_ROOT="$wdkRoot" `
+          -DCMAKE_BUILD_TYPE=${{ matrix.configuration }}
+    
+    - name: Build driver
+      shell: powershell
+      run: |
+        cmake --build build --config ${{ matrix.configuration }} -j 4
+    
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: usbchief-${{ matrix.arch }}-${{ matrix.configuration }}
+        path: |
+          build/${{ matrix.configuration }}/usbchief.sys
+          build/${{ matrix.configuration }}/usbchief.pdb
+        if-no-files-found: error
+    
+    - name: List build output
+      shell: powershell
+      run: |
+        Write-Host "Build directory contents:"
+        Get-ChildItem -Recurse build | Select-Object FullName

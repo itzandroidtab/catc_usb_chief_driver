@@ -66,7 +66,6 @@ target_compile_options(usbchief PRIVATE
     /Zp8        # 8-byte struct alignment
     /Zc:wchar_t-  # Treat wchar_t as built-in type
     /Zi         # Generate complete debug information (PDB)
-    /Od         # Disable optimization for debugging
 )
 
 # Link kernel libraries
@@ -80,5 +79,4 @@ target_link_options(usbchief PRIVATE
     /NODEFAULTLIB
     /MERGE:.rdata=.text
     /MANIFEST:NO
-    /DEBUG              # Generate debug information
 )
