@@ -5,6 +5,10 @@ extern "C" {
     #include <usbdlib.h>
 }
 
+// the amount of alternate settings we support
+constexpr static ULONG max_alternate_settings = 2;
+
+
 static NTSTATUS usb_send_urb(_DEVICE_OBJECT* DeviceObject, PURB Urb) {
     // get the device extension
     chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
@@ -227,10 +231,8 @@ NTSTATUS usb_send_receive_vendor_request(_DEVICE_OBJECT* DeviceObject, usb_chief
 
 NTSTATUS usb_set_alternate_setting(_DEVICE_OBJECT *deviceObject, PUSB_CONFIGURATION_DESCRIPTOR ConfigurationDescriptor, unsigned char AlternateSetting) {
     // check if we have a valid alternate setting
-    // TODO: hardcoded 2?
-    if (AlternateSetting >= 2) {
-        // TODO: invalid parameter sounds better here as error
-        return STATUS_INSUFFICIENT_RESOURCES;
+    if (AlternateSetting >= max_alternate_settings) {
+        return STATUS_INVALID_PARAMETER;
     }
 
     // switch to the alternate setting
