@@ -5,6 +5,10 @@ extern "C" {
     #include <usbdlib.h>
 }
 
+// the amount of alternate settings we support
+constexpr static ULONG max_alternate_settings = 2;
+
+
 static NTSTATUS usb_send_urb(_DEVICE_OBJECT* DeviceObject, PURB Urb) {
     // get the device extension
     chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
@@ -180,7 +184,6 @@ NTSTATUS usb_send_receive_vendor_request(_DEVICE_OBJECT* DeviceObject, usb_chief
         buffer = ExAllocatePoolWithTag(NonPagedPool, Request->length, 0x206D6457u);
 
         if (!buffer) {
-            // TODO: this should free the usb variable before exiting
             return STATUS_INSUFFICIENT_RESOURCES;
         }
 
@@ -227,10 +230,8 @@ NTSTATUS usb_send_receive_vendor_request(_DEVICE_OBJECT* DeviceObject, usb_chief
 
 NTSTATUS usb_set_alternate_setting(_DEVICE_OBJECT *deviceObject, PUSB_CONFIGURATION_DESCRIPTOR ConfigurationDescriptor, unsigned char AlternateSetting) {
     // check if we have a valid alternate setting
-    // TODO: hardcoded 2?
-    if (AlternateSetting >= 2) {
-        // TODO: invalid parameter sounds better here as error
-        return STATUS_INSUFFICIENT_RESOURCES;
+    if (AlternateSetting >= max_alternate_settings) {
+        return STATUS_INVALID_PARAMETER;
     }
 
     // switch to the alternate setting
@@ -311,8 +312,7 @@ NTSTATUS usb_set_alternate_setting(_DEVICE_OBJECT *deviceObject, PUSB_CONFIGURAT
 
     // check if we need to update the interface information
     if (NT_SUCCESS(status)) {
-        // TODO: check if free is needed. What if the usb_interface_info is the 
-        // same size? Big chance it is
+        // check if we need to free the old usb interface info
         if (dev_ext->usb_interface_info) {
             ExFreePool(dev_ext->usb_interface_info);
         }
@@ -335,15 +335,14 @@ NTSTATUS usb_set_alternate_setting(_DEVICE_OBJECT *deviceObject, PUSB_CONFIGURAT
     return STATUS_SUCCESS;
 }
 
-static NTSTATUS usb_get_port_status(_DEVICE_OBJECT* DeviceObject, ULONG* Status) {
+static NTSTATUS usb_get_port_status(_DEVICE_OBJECT* DeviceObject, ULONG& Status) {
     // get the device extension
     chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
 
     struct _IO_STATUS_BLOCK IoStatusBlock;
 
-    // TODO: no null check for Status?
     // clear the status 
-    *Status = 0;
+    Status = 0;
 
     // create an event
     KEVENT event;
@@ -364,7 +363,7 @@ static NTSTATUS usb_get_port_status(_DEVICE_OBJECT* DeviceObject, ULONG* Status)
 
     // get the next stack location
     PIO_STACK_LOCATION stack = IoGetNextIrpStackLocation(irp);
-    stack->Parameters.Others.Argument1 = Status;
+    stack->Parameters.Others.Argument1 = &Status;
 
     // call the driver
     NTSTATUS status = IofCallDriver(dev_ext->attachedDeviceObject, irp);
@@ -430,7 +429,7 @@ NTSTATUS usb_reset_if_not_enabled_but_conected(_DEVICE_OBJECT* DeviceObject) {
     ULONG status;
 
     // get the current port status
-    NTSTATUS res = usb_get_port_status(DeviceObject, &status);
+    NTSTATUS res = usb_get_port_status(DeviceObject, status);
 
     // check if we got a success and if the port is not enabled (bit 0) 
     // and if we are connected (bit 1)
