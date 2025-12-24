@@ -4,6 +4,8 @@ This is a reverse engineering effort to make the driver work on a 64-bit machine
 ## Pictures
 Some pictures of it working on a 64-bit Windows 11 machine
 
+![IMG_20251224_013859](https://github.com/user-attachments/assets/d76e70c2-f00e-44bf-9aa9-ffe41f5a4ac0)
+
 <img width="1567" height="1078" alt="image" src="https://github.com/user-attachments/assets/c615542e-367b-43bf-a8a0-113d2001534e" />
 
 ### Open issues
