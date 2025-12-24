@@ -21,14 +21,36 @@ jobs:
     - name: Setup MSBuild
       uses: microsoft/setup-msbuild@v2
     
+    - name: Cache Windows DDK ISO
+      id: cache-ddk-iso
+      uses: actions/cache@v4
+      with:
+        path: ${{ runner.temp }}\GRMWDK_EN_7600_1.ISO
+        key: winddk-iso-7600.16385.1
+    
+    - name: Download Windows DDK ISO
+      if: steps.cache-ddk-iso.outputs.cache-hit != 'true'
+      shell: powershell
+      run: |
+        Write-Host "Downloading Windows DDK 7.1.0 ISO..."
+        $ddkUrl = "https://download.microsoft.com/download/4/A/2/4A25C7D5-EFBE-4182-B6A9-AE6850409A78/GRMWDK_EN_7600_1.ISO"
+        $ddkIso = "$env:RUNNER_TEMP\GRMWDK_EN_7600_1.ISO"
+        
+        # Use curl for faster, more reliable download
+        curl.exe -L -o $ddkIso $ddkUrl --progress-bar --max-time 900 --retry 3
+        
+        if (Test-Path $ddkIso) {
+          Write-Host "Download complete. File size: $((Get-Item $ddkIso).Length / 1MB) MB"
+        } else {
+          Write-Error "Download failed - file not found"
+          exit 1
+        }
+    
     - name: Install Windows DDK 7.1.0 (7600.16385.1)
       shell: powershell
       run: |
-        Write-Host "Downloading Windows DDK 7.1.0..."
-        # Download Windows 7 WDK ISO (version 7600.16385.1)
-        $ddkUrl = "https://download.microsoft.com/download/4/A/2/4A25C7D5-EFBE-4182-B6A9-AE6850409A78/GRMWDK_EN_7600_1.ISO"
-        $ddkIso = "$env:TEMP\GRMWDK_EN_7600_1.ISO"
-        Invoke-WebRequest -Uri $ddkUrl -OutFile $ddkIso -UseBasicParsing
+        $ddkIso = "$env:RUNNER_TEMP\GRMWDK_EN_7600_1.ISO"
+        Write-Host "Using DDK ISO at: $ddkIso"
         
         Write-Host "Mounting ISO..."
         $mount = Mount-DiskImage -ImagePath $ddkIso -PassThru
