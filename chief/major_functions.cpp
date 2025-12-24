@@ -53,12 +53,8 @@ static ULONG get_pipe_from_unicode_str(_UNICODE_STRING* FileName) {
 }
 
 static void set_power_complete(PDEVICE_OBJECT DeviceObject, UCHAR MinorFunction, POWER_STATE PowerState, PVOID Context, PIO_STATUS_BLOCK IoStatus) {
-    // TODO: why are they not using the DeviceObject parameter directly? No need
-    // for a context here
-    PDEVICE_OBJECT device_object = (PDEVICE_OBJECT)Context;
-
     // get the device extension
-    chief_device_extension* dev_ext = (chief_device_extension*)device_object->DeviceExtension;
+    chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
 
     if (PowerState.DeviceState < dev_ext->target_power_state.DeviceState) {
         // set the event to signal the power request is complete
@@ -66,7 +62,7 @@ static void set_power_complete(PDEVICE_OBJECT DeviceObject, UCHAR MinorFunction,
     }
 
     // release the spinlock
-    spinlock_release(device_object);
+    spinlock_release(DeviceObject);
 }
 
 static NTSTATUS change_power_state_impl(_DEVICE_OBJECT* DeviceObject, const POWER_STATE state) {
@@ -90,7 +86,7 @@ static NTSTATUS change_power_state_impl(_DEVICE_OBJECT* DeviceObject, const POWE
         IRP_MN_SET_POWER,
         state,
         set_power_complete,
-        DeviceObject,
+        nullptr,
         nullptr
     );
 
@@ -166,12 +162,8 @@ static NTSTATUS change_power_state(_DEVICE_OBJECT* DeviceObject, const bool a2) 
 }
 
 static void power_request_complete(PDEVICE_OBJECT DeviceObject, UCHAR MinorFunction, POWER_STATE PowerState, PVOID Context, PIO_STATUS_BLOCK IoStatus) {
-    // TODO: why are they not using the DeviceObject parameter directly? No need
-    // for a context here
-    PDEVICE_OBJECT device_object = (PDEVICE_OBJECT)Context;
-
     // get the device extension
-    chief_device_extension* dev_ext = (chief_device_extension*)device_object->DeviceExtension;
+    chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
 
     // copy the current irp stack location to the next
     IoCopyCurrentIrpStackLocationToNext(dev_ext->power_irp);
@@ -188,16 +180,12 @@ static void power_request_complete(PDEVICE_OBJECT DeviceObject, UCHAR MinorFunct
     dev_ext->power_irp = nullptr;
 
     // release the spinlock
-    spinlock_release(device_object);
+    spinlock_release(DeviceObject);
 }
 
 static NTSTATUS power_state_systemworking_complete(PDEVICE_OBJECT DeviceObject, PIRP Irp, PVOID Context) {
-    // TODO: why are they not using the DeviceObject parameter directly? No need
-    // for a context here
-    PDEVICE_OBJECT device_object = (PDEVICE_OBJECT)Context;
-
     // get the device extension
-    chief_device_extension* dev_ext = (chief_device_extension*)device_object->DeviceExtension;
+    chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
 
     // check if we have a pending return
     if (Irp->PendingReturned) {
@@ -209,7 +197,7 @@ static NTSTATUS power_state_systemworking_complete(PDEVICE_OBJECT DeviceObject, 
     Irp->IoStatus.Status = STATUS_SUCCESS;
 
     // release the spinlock
-    spinlock_release(device_object);
+    spinlock_release(DeviceObject);
 
     // return success
     return STATUS_SUCCESS;
@@ -590,7 +578,7 @@ NTSTATUS mj_power(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
                                 IRP_MN_SET_POWER,
                                 device_state,
                                 power_request_complete,
-                                DeviceObject,
+                                nullptr,
                                 nullptr
                             );
                         }
@@ -625,7 +613,7 @@ NTSTATUS mj_power(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
 
                             // the callback will handle releasing the spinlock
                             stack->CompletionRoutine = power_state_systemworking_complete;
-                            stack->Context = DeviceObject;
+                            stack->Context = nullptr;
                             stack->Control = SL_INVOKE_ON_SUCCESS | SL_INVOKE_ON_ERROR | SL_INVOKE_ON_CANCEL;
                         }
 
