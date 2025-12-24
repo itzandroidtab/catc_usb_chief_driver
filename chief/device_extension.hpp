@@ -29,7 +29,7 @@ struct chief_device_extension {
   DEVICE_CAPABILITIES device_capabilities;
   IRP *power_irp;
   _URB_BULK_OR_INTERRUPT_TRANSFER *bulk_interrupt_request;
-  KEVENT event0;
+  KEVENT pipe_count_empty;
   KEVENT event1;
   KEVENT event2;
   KEVENT power_complete_event;

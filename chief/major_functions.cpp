@@ -813,7 +813,7 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
             spinlock_release(DeviceObject);
 
             KeWaitForSingleObject(
-                &dev_ext->event0, Suspended, KernelMode, false, nullptr
+                &dev_ext->pipe_count_empty, Suspended, KernelMode, false, nullptr
             );
 
             usb_cleanup_memory(DeviceObject);

@@ -30,7 +30,7 @@ LONG spinlock_release(PDEVICE_OBJECT DeviceObject) {
     // check if we need to set and event
     switch (new_count) {
         case 0:
-            KeSetEvent(&dev_ext->event0, EVENT_INCREMENT, false);
+            KeSetEvent(&dev_ext->pipe_count_empty, EVENT_INCREMENT, false);
             break;
         case 1:
             KeSetEvent(&dev_ext->event1, EVENT_INCREMENT, false);
