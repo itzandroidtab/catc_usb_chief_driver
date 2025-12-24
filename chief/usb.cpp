@@ -335,15 +335,14 @@ NTSTATUS usb_set_alternate_setting(_DEVICE_OBJECT *deviceObject, PUSB_CONFIGURAT
     return STATUS_SUCCESS;
 }
 
-static NTSTATUS usb_get_port_status(_DEVICE_OBJECT* DeviceObject, ULONG* Status) {
+static NTSTATUS usb_get_port_status(_DEVICE_OBJECT* DeviceObject, ULONG& Status) {
     // get the device extension
     chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
 
     struct _IO_STATUS_BLOCK IoStatusBlock;
 
-    // TODO: no null check for Status?
     // clear the status 
-    *Status = 0;
+    Status = 0;
 
     // create an event
     KEVENT event;
@@ -364,7 +363,7 @@ static NTSTATUS usb_get_port_status(_DEVICE_OBJECT* DeviceObject, ULONG* Status)
 
     // get the next stack location
     PIO_STACK_LOCATION stack = IoGetNextIrpStackLocation(irp);
-    stack->Parameters.Others.Argument1 = Status;
+    stack->Parameters.Others.Argument1 = &Status;
 
     // call the driver
     NTSTATUS status = IofCallDriver(dev_ext->attachedDeviceObject, irp);
@@ -430,7 +429,7 @@ NTSTATUS usb_reset_if_not_enabled_but_conected(_DEVICE_OBJECT* DeviceObject) {
     ULONG status;
 
     // get the current port status
-    NTSTATUS res = usb_get_port_status(DeviceObject, &status);
+    NTSTATUS res = usb_get_port_status(DeviceObject, status);
 
     // check if we got a success and if the port is not enabled (bit 0) 
     // and if we are connected (bit 1)
