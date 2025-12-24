@@ -14,7 +14,7 @@ static void driver_unload(__in struct _DRIVER_OBJECT *DriverObject) {
     return;
 }
 
-NTSTATUS add_chief_device(PDRIVER_OBJECT driver_object, PDEVICE_OBJECT* device_object) {
+NTSTATUS add_chief_device(PDRIVER_OBJECT driver_object, PDEVICE_OBJECT& device_object) {
     // the device and symbolic link names
     constexpr static wchar_t device_name[] = L"\\Device\\ChiefUSB";
     constexpr static wchar_t symbolic_link_name[] = L"\\DosDevices\\ChiefUSB";
@@ -35,7 +35,7 @@ NTSTATUS add_chief_device(PDRIVER_OBJECT driver_object, PDEVICE_OBJECT* device_o
         FILE_DEVICE_USB,
         0,
         FALSE,
-        device_object
+        &device_object
     );
 
     // check for errors
@@ -47,9 +47,19 @@ NTSTATUS add_chief_device(PDRIVER_OBJECT driver_object, PDEVICE_OBJECT* device_o
     status = IoCreateSymbolicLink(&symbolic_link_name_unicode, &device_name_unicode);
 
     // initialize the device extension
-    chief_device_extension* dev_ext = (chief_device_extension*)((*device_object)->DeviceExtension);
+    chief_device_extension* dev_ext = (chief_device_extension*)(device_object->DeviceExtension);
 
-    // TODO: if the symbolic link creation fails, we should delete the device object
+    // check if the symbolic link creation was successful
+    if (!NT_SUCCESS(status)) {
+        // delete the device object
+        IoDeleteDevice(device_object);
+
+        // reset the device object pointer back to a nullptr
+        device_object = nullptr;
+
+        // return the error status
+        return status;
+    }
 
     // initalize the events
     KeInitializeEvent(&dev_ext->event0, NotificationEvent, FALSE);
@@ -130,7 +140,7 @@ static NTSTATUS add_device(__in struct _DRIVER_OBJECT *DriverObject, __in struct
     PDEVICE_OBJECT device_object = nullptr;
 
     // Add the device using the device and symbolic link names
-    NTSTATUS result = add_chief_device(DriverObject, &device_object);
+    NTSTATUS result = add_chief_device(DriverObject, device_object);
 
     // check for errors
     if (!NT_SUCCESS(result)) {
