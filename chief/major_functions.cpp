@@ -597,10 +597,6 @@ NTSTATUS mj_power(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
                             );
                         }
                         else {
-                            // forward the irp to the next driver if we are not changing power states
-                            // TODO: is this needed. We are not changing power states. We could just
-                            // complete the irp right here. Figure out if this is needed
-
                             // copy the current irp stack location to the next
                             IoCopyCurrentIrpStackLocationToNext(Irp);
 
