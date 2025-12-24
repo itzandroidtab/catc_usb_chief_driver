@@ -59,8 +59,8 @@ jobs:
         Write-Host "Installing DDK from ${driveLetter}:..."
         $setupPath = "${driveLetter}:\KitSetup.exe"
         
-        # Install DDK silently to C:\WinDDK\7600.16385.1
-        & $setupPath /install "{45292B3D-2D37-4048-494A-4B4C4D4E4F50}" /configure /no-view /install-location C:\WinDDK\7600.16385.1 2>&1 | Out-Host
+        # Install DDK fully unattended - /ui-level EXPRESS skips confirmation prompts
+        & $setupPath /install "{45292B3D-2D37-4048-494A-4B4C4D4E4F50}" /ui-level EXPRESS /no-view /install-location C:\WinDDK\7600.16385.1 2>&1 | Out-Host
 
         ls "C:\WinDDK\"
         ls "C:\WinDDK\7600.16385.1"
