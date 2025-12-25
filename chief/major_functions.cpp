@@ -113,7 +113,7 @@ static NTSTATUS change_power_state_impl(_DEVICE_OBJECT* DeviceObject, const POWE
     return status;
 }
 
-static NTSTATUS change_power_state(_DEVICE_OBJECT* DeviceObject, const bool a2) {
+static NTSTATUS change_power_state(_DEVICE_OBJECT* DeviceObject) {
     // check if we have a delete pending
     if (!delete_is_not_pending(DeviceObject)) {
         return STATUS_DELETE_PENDING;
@@ -131,17 +131,12 @@ static NTSTATUS change_power_state(_DEVICE_OBJECT* DeviceObject, const bool a2) 
     
     // TODO: figure out what the remainder of this function does. It doesnt
     // make too much sense
-    if (a2) {
-        if (pipe_count) {
-            return STATUS_SUCCESS;
-        }
-    }
-    else if (!pipe_count) {
+    if (!pipe_count) {
         return STATUS_SUCCESS;
     }
 
     // get the power state
-    const POWER_STATE state = dev_ext->target_power_state;
+    POWER_STATE state = dev_ext->target_power_state;
 
     // check if we are currently in a working, unspecified or 
     // hibernate state (we only pass here if we are in a 
@@ -153,12 +148,8 @@ static NTSTATUS change_power_state(_DEVICE_OBJECT* DeviceObject, const bool a2) 
         return STATUS_SUCCESS;
     } 
 
-    if (!a2) {
-        POWER_STATE ps = {};
-        ps.DeviceState = PowerDeviceD0;
-
-        return change_power_state_impl(DeviceObject, ps);
-    }
+    // change the power state to D0
+    state.DeviceState = PowerDeviceD0;
 
     return change_power_state_impl(DeviceObject, state);
 }
@@ -326,7 +317,7 @@ NTSTATUS mj_create(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP
                 spinlock_increment(DeviceObject);
 
                 // change the power state
-                change_power_state(DeviceObject, false);
+                change_power_state(DeviceObject);
             }
         }
     }
@@ -533,7 +524,7 @@ NTSTATUS mj_power(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
                     }
 
                     // change the power state to the new value i guess
-                    change_power_state(DeviceObject, false);
+                    change_power_state(DeviceObject);
                     
                     dev_ext->power_1_request_busy = false;
                 }
