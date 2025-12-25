@@ -65,7 +65,7 @@ static NTSTATUS usb_bulk_or_interrupt_transfer_complete(PDEVICE_OBJECT DeviceObj
     }
     
     // TODO: Shouldnt the spinlock be released at the end of this function?
-    spinlock_release(DeviceObject);
+    spinlock_decrement(DeviceObject);
 
     // get the device extension
     chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
@@ -171,7 +171,7 @@ NTSTATUS usb_send_bulk_or_interrupt_transfer(__in struct _DEVICE_OBJECT *DeviceO
     stack->Control = SL_INVOKE_ON_SUCCESS | SL_INVOKE_ON_ERROR | SL_INVOKE_ON_CANCEL;
 
     // acquire the spinlock
-    spinlock_acquire(DeviceObject);
+    spinlock_increment(DeviceObject);
 
     return IofCallDriver(dev_ext->attachedDeviceObject, Irp);
 }
@@ -491,6 +491,7 @@ NTSTATUS usb_pipe_abort(_DEVICE_OBJECT* DeviceObject) {
         dev_ext->allocated_pipes[i] = false;
 
         // decrement the interlocked value
+        // TODO: why is this not using the spinlock_decrement function?
         InterlockedDecrement(&dev_ext->pipe_open_count);
     }
 

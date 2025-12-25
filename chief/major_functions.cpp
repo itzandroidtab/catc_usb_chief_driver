@@ -62,7 +62,7 @@ static void set_power_complete(PDEVICE_OBJECT DeviceObject, UCHAR MinorFunction,
     }
 
     // release the spinlock
-    spinlock_release(DeviceObject);
+    spinlock_decrement(DeviceObject);
 }
 
 static NTSTATUS change_power_state_impl(_DEVICE_OBJECT* DeviceObject, const POWER_STATE state) {
@@ -75,7 +75,7 @@ static NTSTATUS change_power_state_impl(_DEVICE_OBJECT* DeviceObject, const POWE
     }
 
     // acquire the spinlock
-    spinlock_acquire(DeviceObject);
+    spinlock_increment(DeviceObject);
 
     // mark the power request as busy
     dev_ext->power_request_busy = true;
@@ -129,6 +129,7 @@ static NTSTATUS change_power_state(_DEVICE_OBJECT* DeviceObject, const bool a2) 
 
     // TODO: figure out what the remainder of this function does. It doesnt
     // make too much sense
+    // TODO: dont we need to do anything with the device_lock spinlock here?
     if (a2) {
         if (dev_ext->pipe_open_count) {
             return STATUS_SUCCESS;
@@ -180,7 +181,7 @@ static void power_request_complete(PDEVICE_OBJECT DeviceObject, UCHAR MinorFunct
     dev_ext->power_irp = nullptr;
 
     // release the spinlock
-    spinlock_release(DeviceObject);
+    spinlock_decrement(DeviceObject);
 }
 
 static NTSTATUS power_state_systemworking_complete(PDEVICE_OBJECT DeviceObject, PIRP Irp, PVOID Context) {
@@ -197,7 +198,7 @@ static NTSTATUS power_state_systemworking_complete(PDEVICE_OBJECT DeviceObject, 
     Irp->IoStatus.Status = STATUS_SUCCESS;
 
     // release the spinlock
-    spinlock_release(DeviceObject);
+    spinlock_decrement(DeviceObject);
 
     // return success
     return STATUS_SUCCESS;
@@ -293,7 +294,7 @@ NTSTATUS mj_create(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP
     chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
 
     // aquire the spinlock
-    spinlock_acquire(DeviceObject);
+    spinlock_increment(DeviceObject);
 
     NTSTATUS status = STATUS_SUCCESS;
 
@@ -323,6 +324,7 @@ NTSTATUS mj_create(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP
                 dev_ext->allocated_pipes[pipe_index] = true;
 
                 // increment the interlocked value
+                // TODO: why is this not using the spinlock_increment function?
                 InterlockedIncrement(&dev_ext->pipe_open_count);
 
                 // change the power state
@@ -337,14 +339,14 @@ NTSTATUS mj_create(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP
     IofCompleteRequest(Irp, IO_NO_INCREMENT);
 
     // release the spinlock
-    spinlock_release(DeviceObject);
+    spinlock_decrement(DeviceObject);
 
     return status;
 }
 
 NTSTATUS mj_close(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *Irp) {
     // acquire the spinlock
-    spinlock_acquire(DeviceObject);
+    spinlock_increment(DeviceObject);
 
     // get the device extension
     chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
@@ -365,13 +367,14 @@ NTSTATUS mj_close(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
                 dev_ext->allocated_pipes[pipe_index] = false;
 
                 // decrement the interlocked value
+                // TODO: why is this not using the spinlock_decrement function?
                 InterlockedDecrement(&dev_ext->pipe_open_count);
             }
         }
     }
 
     // release the spinlock
-    spinlock_release(DeviceObject);
+    spinlock_decrement(DeviceObject);
 
     Irp->IoStatus.Status = STATUS_SUCCESS;
     Irp->IoStatus.Information = 0;
@@ -392,7 +395,7 @@ NTSTATUS mj_write(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
 
 NTSTATUS mj_device_control(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *Irp) {
     // acquire the spinlock
-    spinlock_acquire(DeviceObject);
+    spinlock_increment(DeviceObject);
 
     // get the device extension
     chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
@@ -466,7 +469,7 @@ NTSTATUS mj_device_control(__in struct _DEVICE_OBJECT *DeviceObject, __inout str
     IofCompleteRequest(Irp, IO_NO_INCREMENT);
 
     // release the spinlock
-    spinlock_release(DeviceObject);
+    spinlock_decrement(DeviceObject);
 
     return status;
 }
@@ -479,7 +482,7 @@ NTSTATUS mj_power(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
     PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(Irp);
 
     // acquire the spinlock
-    spinlock_acquire(DeviceObject);
+    spinlock_increment(DeviceObject);
 
     NTSTATUS status = STATUS_SUCCESS;
 
@@ -661,7 +664,7 @@ NTSTATUS mj_power(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
     }
 
     // release the spinlock
-    spinlock_release(DeviceObject);
+    spinlock_decrement(DeviceObject);
 
     // return the status
     return status;
@@ -673,7 +676,7 @@ NTSTATUS mj_system_control(__in struct _DEVICE_OBJECT *DeviceObject, __inout str
     Irp->IoStatus.Information = 0;
 
     // aquire the spinlock
-    spinlock_acquire(DeviceObject);
+    spinlock_increment(DeviceObject);
 
     // copy the current irp stack location to the next
     IoCopyCurrentIrpStackLocationToNext(Irp);
@@ -685,7 +688,7 @@ NTSTATUS mj_system_control(__in struct _DEVICE_OBJECT *DeviceObject, __inout str
     );
 
     // release the spinlock
-    spinlock_release(DeviceObject);
+    spinlock_decrement(DeviceObject);
 
     return status;
 }
@@ -701,7 +704,7 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
     chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;   
 
     // acquire the spinlock
-    spinlock_acquire(DeviceObject);
+    spinlock_increment(DeviceObject);
 
     NTSTATUS status = STATUS_SUCCESS;
 
@@ -774,13 +777,13 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
                 }
 
                 IofCompleteRequest(Irp, IO_NO_INCREMENT);
-                spinlock_release(DeviceObject);
+                spinlock_decrement(DeviceObject);
                 break;
             }
 
         case IRP_MN_REMOVE_DEVICE:
             // stop everything that is running
-            spinlock_release(DeviceObject);
+            spinlock_decrement(DeviceObject);
             dev_ext->is_ejecting = true;
             usb_pipe_abort(DeviceObject);
 
@@ -791,7 +794,7 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
             status = IofCallDriver(dev_ext->attachedDeviceObject, Irp);
 
             // release the spinlock again
-            spinlock_release(DeviceObject);
+            spinlock_decrement(DeviceObject);
 
             KeWaitForSingleObject(
                 &dev_ext->pipe_count_empty, Suspended, KernelMode, false, nullptr
@@ -829,7 +832,7 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
                 IofCompleteRequest(Irp, IO_NO_INCREMENT);
             }
 
-            spinlock_release(DeviceObject);
+            spinlock_decrement(DeviceObject);
             break;
 
         case IRP_MN_QUERY_REMOVE_DEVICE:
@@ -856,7 +859,7 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
             status = IofCallDriver(dev_ext->attachedDeviceObject, Irp);
 
             // release the spinlock
-            spinlock_release(DeviceObject);
+            spinlock_decrement(DeviceObject);
             break;
 
         case IRP_MN_QUERY_STOP_DEVICE:
@@ -876,7 +879,7 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
             }
 
             // release the spinlock
-            spinlock_release(DeviceObject);
+            spinlock_decrement(DeviceObject);
             break;
 
         case IRP_MN_CANCEL_STOP_DEVICE:
@@ -904,12 +907,12 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
             status = IofCallDriver(dev_ext->attachedDeviceObject, Irp);
 
             // release the spinlock
-            spinlock_release(DeviceObject);
+            spinlock_decrement(DeviceObject);
             break;
 
         case IRP_MN_EJECT:
             // release the spinlock
-            spinlock_release(DeviceObject);
+            spinlock_decrement(DeviceObject);
 
             // mark we are ejecting
             dev_ext->is_ejecting = true;
@@ -935,7 +938,7 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
             status = IofCallDriver(dev_ext->attachedDeviceObject, Irp);
 
             // release the spinlock
-            spinlock_release(DeviceObject);
+            spinlock_decrement(DeviceObject);
             break;
     }
 

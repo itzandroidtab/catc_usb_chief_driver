@@ -182,7 +182,7 @@ static NTSTATUS add_device(__in struct _DRIVER_OBJECT *DriverObject, __in struct
     dev_ext->target_power_state.DeviceState = PowerDeviceUnspecified;
 
     // acquire the spinlock
-    spinlock_acquire(device_object);
+    spinlock_increment(device_object);
 
     // clear the flag we are inititializing
     device_object->Flags &= ~DO_DEVICE_INITIALIZING;
