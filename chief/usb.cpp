@@ -604,7 +604,12 @@ NTSTATUS usb_clear_config_desc(_DEVICE_OBJECT* DeviceObject) {
 
     // if successful, mark that we no longer have a config descriptor
     if (NT_SUCCESS(status)) {
-        dev_ext->has_config_desc = false;
+        // free the config descriptor memory if we have any
+        if (dev_ext->usb_config_desc) {
+            // free the config descriptor memory
+            ExFreePool(dev_ext->usb_config_desc);
+            dev_ext->usb_config_desc = nullptr;
+        }
     }
 
     // clear the is_stopped flag

@@ -15,7 +15,7 @@ static bool delete_is_not_pending(__in struct _DEVICE_OBJECT *DeviceObject) {
     chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
     
     // return if the device is not being removed or ejected and has a configuration descriptor
-    return !dev_ext->is_ejecting && dev_ext->has_config_desc && !dev_ext->is_removing && !dev_ext->is_stopped;
+    return !dev_ext->is_ejecting && (dev_ext->usb_config_desc != nullptr) && !dev_ext->is_removing && !dev_ext->is_stopped;
 }
 
 /**
@@ -758,13 +758,8 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
 
                         // mark if we have a config descriptor
                         if (NT_SUCCESS(status)) {
-                            dev_ext->has_config_desc = true;
-
                             // set the alternate setting to 0
                             status = usb_set_alternate_setting(DeviceObject, dev_ext->usb_config_desc, 0);
-                        }
-                        else {
-                            dev_ext->has_config_desc = false;
                         }
                     }
                     else {
@@ -837,7 +832,7 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
 
         case IRP_MN_QUERY_REMOVE_DEVICE:
             // check if we have a config descriptor
-            if (!dev_ext->has_config_desc) {
+            if (!dev_ext->usb_config_desc) {
                 // skip the irp
                 IoSkipCurrentIrpStackLocation(Irp);
             }
@@ -864,7 +859,7 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
 
         case IRP_MN_QUERY_STOP_DEVICE:
             // check if we have a config descriptor
-            if (!dev_ext->has_config_desc) {
+            if (!dev_ext->usb_config_desc) {
                 // skip the irp
                 IoSkipCurrentIrpStackLocation(Irp);
 
@@ -885,7 +880,7 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
         case IRP_MN_CANCEL_STOP_DEVICE:
         case IRP_MN_CANCEL_REMOVE_DEVICE:
             // check if we have a config descriptor
-            if (!dev_ext->has_config_desc) {
+            if (!dev_ext->usb_config_desc) {
                 // skip the irp
                 IoSkipCurrentIrpStackLocation(Irp);
             }
