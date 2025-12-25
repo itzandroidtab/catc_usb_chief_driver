@@ -103,109 +103,6 @@ static ULONG get_pipe_from_unicode_str(_UNICODE_STRING* FileName) {
     return found_digit ? result : ULONG_MAX;
 }
 
-static void set_power_complete(PDEVICE_OBJECT DeviceObject, UCHAR MinorFunction, POWER_STATE PowerState, PVOID Context, PIO_STATUS_BLOCK IoStatus) {
-    // get the device extension
-    chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
-
-    if (PowerState.DeviceState < dev_ext->device_capabilities.DeviceWake) {
-        // set the event to signal the power request is complete
-        KeSetEvent(&dev_ext->power_complete_event, EVENT_INCREMENT, false);
-    }
-
-    // release the spinlock
-    spinlock_decrement_notify(DeviceObject);
-}
-
-static NTSTATUS change_power_state_impl(_DEVICE_OBJECT* DeviceObject, const POWER_STATE state) {
-    // get the device extension
-    chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
-
-    // check if we are already in the requested state
-    if (dev_ext->current_power_state.DeviceState == state.DeviceState) {
-        return STATUS_SUCCESS;
-    }
-
-    // acquire the spinlock
-    spinlock_increment(DeviceObject);
-
-    // mark the power request as busy
-    dev_ext->power_request_busy = true;
-
-    // send a IRP_MN_SET_POWER request to the driver
-    NTSTATUS status = PoRequestPowerIrp(
-        dev_ext->physicalDeviceObject,
-        IRP_MN_SET_POWER,
-        state,
-        set_power_complete,
-        nullptr,
-        nullptr
-    );
-
-    // check if we have a pending status
-    if (status == STATUS_PENDING) {
-        // check if we need to wait for the request to complete
-        if (state.DeviceState < dev_ext->device_capabilities.DeviceWake) {
-            KeWaitForSingleObject(
-                &dev_ext->power_complete_event,
-                Suspended,
-                KernelMode,
-                false,
-                nullptr
-            );
-        }
-
-        // TODO: why is this not using the status from the completion routine?
-        status = STATUS_SUCCESS;
-    }
-
-    // clear the power request busy flag
-    dev_ext->power_request_busy = false;
-
-    return status;
-}
-
-static NTSTATUS change_power_state(_DEVICE_OBJECT* DeviceObject) {
-    // check if we have a delete pending
-    if (!delete_is_not_pending(DeviceObject)) {
-        return STATUS_DELETE_PENDING;
-    }
-
-    // get the device extension
-    chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
-
-    // check if we have a power irq pending or we have a power request busy
-    if (dev_ext->power_irp_count || dev_ext->power_request_busy) {
-        return STATUS_SUCCESS;
-    }
-
-    const LONG pipe_count = spinlock_get_count(DeviceObject);
-    
-    // TODO: figure out what the remainder of this function does. It doesnt
-    // make too much sense
-    if (!pipe_count) {
-        return STATUS_SUCCESS;
-    }
-
-    // get the power state
-    POWER_STATE state;
-    state.DeviceState = dev_ext->device_capabilities.DeviceWake;
-
-    // check if we are currently in a working, unspecified or 
-    // hibernate state (we only pass here if we are in a 
-    // sleeping1/2/3 or shutdown state)
-    if (state.DeviceState == PowerDeviceD0 || 
-        state.DeviceState == PowerDeviceUnspecified ||
-        state.DeviceState >= PowerDeviceMaximum) 
-    {
-        return STATUS_SUCCESS;
-    } 
-
-    // change the power state to D0
-    state.DeviceState = PowerDeviceD0;
-
-    return change_power_state_impl(DeviceObject, state);
-}
-
 static void power_request_complete(PDEVICE_OBJECT DeviceObject, UCHAR MinorFunction, POWER_STATE PowerState, PVOID Context, PIO_STATUS_BLOCK IoStatus) {
     // get the device extension
     chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
@@ -353,9 +250,6 @@ NTSTATUS mj_create(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP
 
                 // increment the interlocked value
                 spinlock_increment(DeviceObject);
-
-                // change the power state
-                change_power_state(DeviceObject);
             }
         }
     }
@@ -514,46 +408,12 @@ NTSTATUS mj_power(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
 
     switch (stack->MinorFunction) {
         case IRP_MN_WAIT_WAKE:
-            {
-                // check if the device can wake the system. I dont think the USB chief can
-                // do this but this was in the original code so keeping it here
-                if (dev_ext->device_capabilities.DeviceWake == PowerDeviceUnspecified ||
-                    dev_ext->device_capabilities.SystemWake == PowerSystemUnspecified) 
-                {
-                    // set the status to invalid device state
-                    status = Irp->IoStatus.Status = STATUS_NOT_SUPPORTED;
+            // the USB chief doesnt support wake from any sleep state. Dont bother
+            // checking the power state and just fail the request
+            status = Irp->IoStatus.Status = STATUS_NOT_SUPPORTED;
 
-                    // complete the irp
-                    IofCompleteRequest(Irp, IO_NO_INCREMENT);
-                    break;
-                }
-
-                // create a event
-                KEVENT event;
-                KeInitializeEvent(&event, NotificationEvent, false);
-
-                // the device can wake the system. Forward the request to the next power driver
-                status = forward_to_next_power_driver(
-                    dev_ext->attachedDeviceObject,
-                    Irp,
-                    signal_event_complete,
-                    &event
-                );
-
-                // check if we need to wait on the request
-                if (status == STATUS_PENDING) {
-                    // wait for the event to be signaled
-                    KeWaitForSingleObject(
-                        &event,
-                        Suspended,
-                        KernelMode,
-                        false,
-                        nullptr
-                    );
-
-                    status = Irp->IoStatus.Status;
-                }
-            }   
+            // complete the irp
+            IofCompleteRequest(Irp, IO_NO_INCREMENT);
             break;     
         
         case IRP_MN_SET_POWER:

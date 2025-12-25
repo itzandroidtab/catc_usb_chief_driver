@@ -30,15 +30,12 @@ struct chief_device_extension {
   KEVENT pipe_count_empty;
   KEVENT event1;
   KEVENT event2;
-  KEVENT power_complete_event;
   KSPIN_LOCK device_lock;
-  LONG InterlockedValue1;
   LONG pipe_open_count;
   bool *allocated_pipes;
   volatile bool is_ejecting;
   volatile bool is_removing;
   volatile bool is_stopped;
-  volatile bool power_request_busy;
 
   // The BCD version of the connected USB device
   maybe<unsigned short> bcdUSB;
