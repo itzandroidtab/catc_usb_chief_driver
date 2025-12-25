@@ -219,6 +219,20 @@ static bool update_power_state(_DEVICE_OBJECT* DeviceObject, const DEVICE_POWER_
     return false;
 }
 
+static DEVICE_POWER_STATE system_state_to_device_power_state(_DEVICE_OBJECT* DeviceObject, SYSTEM_POWER_STATE state) {
+    // check if we have a valid state
+    if (state >= POWER_SYSTEM_MAXIMUM) {
+        // if we dont have a valid state, return the deepest power state
+        return PowerDeviceD3;
+    }
+
+    // get the device extension
+    chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
+
+    // return the device power state for the given system power state
+    return dev_ext->device_capabilities.DeviceState[state];
+}
+
 static NTSTATUS usb_cleanup_memory(_DEVICE_OBJECT* DeviceObject) {
     // get the device extension
     chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
@@ -489,8 +503,6 @@ NTSTATUS mj_power(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
 
                 // check if we are already in the PowerDeviceD0 state
                 if (state.DeviceState != PowerDeviceD0 || dev_ext->target_power_state.DeviceState < state.DeviceState) {
-                    dev_ext->wait_wake_in_progress = true;
-
                     // copy the current irp stack location to the next
                     IoCopyCurrentIrpStackLocationToNext(Irp);
 
@@ -524,8 +536,6 @@ NTSTATUS mj_power(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
 
                     // change the power state to the new value i guess
                     change_power_state(DeviceObject);
-                    
-                    dev_ext->wait_wake_in_progress = false;
                 }
                 else {
                     // set the status to invalid device state
@@ -545,19 +555,11 @@ NTSTATUS mj_power(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
                         // get the requested system power state
                         const SYSTEM_POWER_STATE system_state = stack->Parameters.Power.State.SystemState;
                         POWER_STATE device_state;
-                        device_state.DeviceState = PowerDeviceD0;
-                        
-                        // check if the system state is not working. If its not working we need
-                        // to map it to a device power state
-                        if (system_state != PowerSystemWorking) {
-                            if (dev_ext->wait_wake_in_progress) {
-                                device_state.DeviceState = dev_ext->device_capabilities.DeviceState[system_state];
-                            }
-                            else {
-                                device_state.DeviceState = PowerDeviceD3;
-                            }
-                        }
 
+                        // use the device mapping to get the device power state
+                        device_state.DeviceState = system_state_to_device_power_state(DeviceObject, system_state);
+                        
+                        // check if we need to change the power state
                         if (device_state.DeviceState != dev_ext->current_power_state.DeviceState) {
                             // store the current IRP
                             dev_ext->power_irp = Irp;

@@ -39,7 +39,6 @@ struct chief_device_extension {
   volatile bool is_ejecting;
   volatile bool is_removing;
   volatile bool is_stopped;
-  volatile bool wait_wake_in_progress;
   volatile bool power_request_busy;
   POWER_STATE target_power_state;
 
