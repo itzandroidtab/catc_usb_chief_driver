@@ -3,7 +3,7 @@
 
 void spinlock_increment(PDEVICE_OBJECT DeviceObject) {
     // get the device extension
-    chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
+    chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
     
     // acquire the spinlock
     KIRQL irql;
@@ -16,9 +16,9 @@ void spinlock_increment(PDEVICE_OBJECT DeviceObject) {
     KeReleaseSpinLock(&dev_ext->device_lock, irql);
 }
 
-LONG spinlock_decrement(PDEVICE_OBJECT DeviceObject) {
+LONG spinlock_decrement_notify(PDEVICE_OBJECT DeviceObject) {
     // get the device extension
-    chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
+    chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
 
     // acquire the spinlock
     KIRQL irql;
@@ -45,4 +45,40 @@ LONG spinlock_decrement(PDEVICE_OBJECT DeviceObject) {
 
     // return the new count
     return new_count;
+}
+
+LONG spinlock_decrement(PDEVICE_OBJECT DeviceObject) {
+    // get the device extension
+    chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
+
+    // acquire the spinlock
+    KIRQL irql;
+    KeAcquireSpinLock(&dev_ext->device_lock, &irql);
+    
+    // decrement the lock count
+    LONG new_count = InterlockedDecrement(&dev_ext->pipe_open_count);
+
+    // release the spinlock
+    KeReleaseSpinLock(&dev_ext->device_lock, irql);
+
+    // return the new count
+    return new_count;
+}
+
+LONG spinlock_get_count(PDEVICE_OBJECT DeviceObject) {
+    // get the device extension
+    chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
+
+    // acquire the spinlock
+    KIRQL irql;
+    KeAcquireSpinLock(&dev_ext->device_lock, &irql);
+    
+    // get the lock count
+    LONG count = dev_ext->pipe_open_count;
+
+    // release the spinlock
+    KeReleaseSpinLock(&dev_ext->device_lock, irql);
+
+    // return the count
+    return count;
 }

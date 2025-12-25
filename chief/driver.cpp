@@ -46,9 +46,6 @@ NTSTATUS add_chief_device(PDRIVER_OBJECT driver_object, PDEVICE_OBJECT& device_o
     // create the symbolic link
     status = IoCreateSymbolicLink(&symbolic_link_name_unicode, &device_name_unicode);
 
-    // initialize the device extension
-    chief_device_extension* dev_ext = (chief_device_extension*)(device_object->DeviceExtension);
-
     // check if the symbolic link creation was successful
     if (!NT_SUCCESS(status)) {
         // delete the device object
@@ -60,6 +57,12 @@ NTSTATUS add_chief_device(PDRIVER_OBJECT driver_object, PDEVICE_OBJECT& device_o
         // return the error status
         return status;
     }
+
+    // initialize the device extension
+    chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(device_object->DeviceExtension);
+    
+    // reset the whole device extension memory to zero
+    memset(dev_ext, 0, sizeof(chief_device_extension));
 
     // initalize the events
     KeInitializeEvent(&dev_ext->pipe_count_empty, NotificationEvent, FALSE);
@@ -99,7 +102,7 @@ NTSTATUS io_call_start_device(PDEVICE_OBJECT device_object, _DEVICE_CAPABILITIES
     stack->MajorFunction = IRP_MJ_PNP;
     stack->MinorFunction = IRP_MN_QUERY_CAPABILITIES;
     stack->CompletionRoutine = signal_event_complete;
-    stack->Context = (void*)&event;
+    stack->Context = static_cast<void*>(&event);
     stack->Control = SL_INVOKE_ON_SUCCESS | SL_INVOKE_ON_ERROR | SL_INVOKE_ON_CANCEL;
     stack->Parameters.DeviceCapabilities.Capabilities = device_capabilities;
 
@@ -151,7 +154,7 @@ static NTSTATUS add_device(__in struct _DRIVER_OBJECT *DriverObject, __in struct
     device_object->Flags |= DO_DIRECT_IO | DO_POWER_PAGABLE;
 
     // initialize the device extension
-    chief_device_extension* dev_ext = (chief_device_extension*)device_object->DeviceExtension;
+    chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(device_object->DeviceExtension);
 
     // store the physical device object
     dev_ext->physicalDeviceObject = PhysicalDeviceObject;
@@ -160,7 +163,7 @@ static NTSTATUS add_device(__in struct _DRIVER_OBJECT *DriverObject, __in struct
     dev_ext->attachedDeviceObject = IoAttachDeviceToDeviceStack(device_object, PhysicalDeviceObject);
     
     // check if we have a valid attached device object
-    if (dev_ext->attachedDeviceObject == NULL) {
+    if (dev_ext->attachedDeviceObject == nullptr) {
         // delete the allocated object
         IoDeleteDevice(device_object);
 
@@ -172,8 +175,8 @@ static NTSTATUS add_device(__in struct _DRIVER_OBJECT *DriverObject, __in struct
     dev_ext->device_capabilities = {};
     dev_ext->device_capabilities.Size = sizeof(_DEVICE_CAPABILITIES);
     dev_ext->device_capabilities.Version = 1;
-    dev_ext->device_capabilities.Address = (ULONG)-1;
-    dev_ext->device_capabilities.UINumber = (ULONG)-1;
+    dev_ext->device_capabilities.Address = static_cast<ULONG>(-1);
+    dev_ext->device_capabilities.UINumber = static_cast<ULONG>(-1);
 
     // start the device
     io_call_start_device(dev_ext->attachedDeviceObject, &dev_ext->device_capabilities);

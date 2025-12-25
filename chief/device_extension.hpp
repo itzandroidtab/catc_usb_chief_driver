@@ -9,7 +9,7 @@ extern "C" {
 #include "maybe.hpp"
 
 struct usb_chief_vendor_request {
-    unsigned short Reqeuest;
+    unsigned short Request;
     unsigned short value;
     unsigned short index;
     unsigned short length;
@@ -28,7 +28,6 @@ struct chief_device_extension {
   PUSBD_INTERFACE_INFORMATION usb_interface_info;
   DEVICE_CAPABILITIES device_capabilities;
   IRP *power_irp;
-  _URB_BULK_OR_INTERRUPT_TRANSFER *bulk_interrupt_request;
   KEVENT pipe_count_empty;
   KEVENT event1;
   KEVENT event2;
@@ -40,7 +39,6 @@ struct chief_device_extension {
   volatile bool is_ejecting;
   volatile bool is_removing;
   volatile bool is_stopped;
-  volatile bool has_config_desc;
   volatile bool power_1_request_busy;
   volatile bool power_request_busy;
   POWER_STATE target_power_state;

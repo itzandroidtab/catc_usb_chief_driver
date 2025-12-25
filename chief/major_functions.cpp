@@ -6,16 +6,16 @@
 #include "usb.hpp"
 
 NTSTATUS signal_event_complete(_DEVICE_OBJECT *DeviceObject, _IRP *Irp, void* Event) {
-    KeSetEvent((PRKEVENT)Event, EVENT_INCREMENT, false);
+    KeSetEvent(reinterpret_cast<PRKEVENT>(Event), EVENT_INCREMENT, false);
     
     return STATUS_MORE_PROCESSING_REQUIRED;
 }
 
 static bool delete_is_not_pending(__in struct _DEVICE_OBJECT *DeviceObject) {
-    chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
+    chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
     
     // return if the device is not being removed or ejected and has a configuration descriptor
-    return !dev_ext->is_ejecting && dev_ext->has_config_desc && !dev_ext->is_removing && !dev_ext->is_stopped;
+    return !dev_ext->is_ejecting && (dev_ext->usb_config_desc != nullptr) && !dev_ext->is_removing && !dev_ext->is_stopped;
 }
 
 /**
@@ -54,7 +54,7 @@ static ULONG get_pipe_from_unicode_str(_UNICODE_STRING* FileName) {
 
 static void set_power_complete(PDEVICE_OBJECT DeviceObject, UCHAR MinorFunction, POWER_STATE PowerState, PVOID Context, PIO_STATUS_BLOCK IoStatus) {
     // get the device extension
-    chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
+    chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
 
     if (PowerState.DeviceState < dev_ext->target_power_state.DeviceState) {
         // set the event to signal the power request is complete
@@ -62,12 +62,12 @@ static void set_power_complete(PDEVICE_OBJECT DeviceObject, UCHAR MinorFunction,
     }
 
     // release the spinlock
-    spinlock_decrement(DeviceObject);
+    spinlock_decrement_notify(DeviceObject);
 }
 
 static NTSTATUS change_power_state_impl(_DEVICE_OBJECT* DeviceObject, const POWER_STATE state) {
     // get the device extension
-    chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
+    chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
 
     // check if we are already in the requested state
     if (dev_ext->current_power_state.DeviceState == state.DeviceState) {
@@ -113,34 +113,30 @@ static NTSTATUS change_power_state_impl(_DEVICE_OBJECT* DeviceObject, const POWE
     return status;
 }
 
-static NTSTATUS change_power_state(_DEVICE_OBJECT* DeviceObject, const bool a2) {
+static NTSTATUS change_power_state(_DEVICE_OBJECT* DeviceObject) {
     // check if we have a delete pending
     if (!delete_is_not_pending(DeviceObject)) {
         return STATUS_DELETE_PENDING;
     }
 
     // get the device extension
-    chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
+    chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
 
     // check if we have a power irq pending or we have a power request busy
     if (dev_ext->power_irp || dev_ext->power_request_busy) {
         return STATUS_SUCCESS;
     }
 
+    const LONG pipe_count = spinlock_get_count(DeviceObject);
+    
     // TODO: figure out what the remainder of this function does. It doesnt
     // make too much sense
-    // TODO: dont we need to do anything with the device_lock spinlock here?
-    if (a2) {
-        if (dev_ext->pipe_open_count) {
-            return STATUS_SUCCESS;
-        }
-    }
-    else if (!dev_ext->pipe_open_count) {
+    if (!pipe_count) {
         return STATUS_SUCCESS;
     }
 
     // get the power state
-    const POWER_STATE state = dev_ext->target_power_state;
+    POWER_STATE state = dev_ext->target_power_state;
 
     // check if we are currently in a working, unspecified or 
     // hibernate state (we only pass here if we are in a 
@@ -152,19 +148,15 @@ static NTSTATUS change_power_state(_DEVICE_OBJECT* DeviceObject, const bool a2) 
         return STATUS_SUCCESS;
     } 
 
-    if (!a2) {
-        POWER_STATE ps = {};
-        ps.DeviceState = PowerDeviceD0;
-
-        return change_power_state_impl(DeviceObject, ps);
-    }
+    // change the power state to D0
+    state.DeviceState = PowerDeviceD0;
 
     return change_power_state_impl(DeviceObject, state);
 }
 
 static void power_request_complete(PDEVICE_OBJECT DeviceObject, UCHAR MinorFunction, POWER_STATE PowerState, PVOID Context, PIO_STATUS_BLOCK IoStatus) {
     // get the device extension
-    chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
+    chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
 
     // copy the current irp stack location to the next
     IoCopyCurrentIrpStackLocationToNext(dev_ext->power_irp);
@@ -176,17 +168,15 @@ static void power_request_complete(PDEVICE_OBJECT DeviceObject, UCHAR MinorFunct
     PoCallDriver(dev_ext->attachedDeviceObject, dev_ext->power_irp);
 
     // clear the power irp pointer
-    // TODO: this was done below the spinlock release. I think
-    // it makes more sense to do it before releasing the spinlock
     dev_ext->power_irp = nullptr;
 
     // release the spinlock
-    spinlock_decrement(DeviceObject);
+    spinlock_decrement_notify(DeviceObject);
 }
 
 static NTSTATUS power_state_systemworking_complete(PDEVICE_OBJECT DeviceObject, PIRP Irp, PVOID Context) {
     // get the device extension
-    chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
+    chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
 
     // check if we have a pending return
     if (Irp->PendingReturned) {
@@ -198,7 +188,7 @@ static NTSTATUS power_state_systemworking_complete(PDEVICE_OBJECT DeviceObject, 
     Irp->IoStatus.Status = STATUS_SUCCESS;
 
     // release the spinlock
-    spinlock_decrement(DeviceObject);
+    spinlock_decrement_notify(DeviceObject);
 
     // return success
     return STATUS_SUCCESS;
@@ -215,7 +205,7 @@ static bool update_power_state(_DEVICE_OBJECT* DeviceObject, const DEVICE_POWER_
     // useless
     if (state > PowerDeviceD0) {
         // get the device extension
-        chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
+        chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
 
         if (state <= PowerDeviceD2) {
             dev_ext->current_power_state.DeviceState = state;
@@ -231,7 +221,7 @@ static bool update_power_state(_DEVICE_OBJECT* DeviceObject, const DEVICE_POWER_
 
 static NTSTATUS usb_cleanup_memory(_DEVICE_OBJECT* DeviceObject) {
     // get the device extension
-    chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
+    chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
     
     // clear the bcdUSB value
     dev_ext->bcdUSB.clear();
@@ -274,7 +264,7 @@ static NTSTATUS mj_read_write_impl(__in struct _DEVICE_OBJECT *DeviceObject, __i
     }
 
     // get the device extension
-    chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
+    chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
 
     // get the amount of data to transfer
     const int length = (Irp->MdlAddress) ? MmGetMdlByteCount(Irp->MdlAddress) : 0;
@@ -291,7 +281,7 @@ static NTSTATUS mj_read_write_impl(__in struct _DEVICE_OBJECT *DeviceObject, __i
 
 NTSTATUS mj_create(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *Irp) {
     // get the device extension
-    chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
+    chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
 
     // aquire the spinlock
     spinlock_increment(DeviceObject);
@@ -318,17 +308,16 @@ NTSTATUS mj_create(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP
             }
             else {
                 // store the pipe information in the fs context
-                file->FsContext = (void*)&dev_ext->usb_interface_info->Pipes[pipe_index];
+                file->FsContext = static_cast<void*>(&dev_ext->usb_interface_info->Pipes[pipe_index]);
 
                 // mark the pipe as allocated
                 dev_ext->allocated_pipes[pipe_index] = true;
 
                 // increment the interlocked value
-                // TODO: why is this not using the spinlock_increment function?
-                InterlockedIncrement(&dev_ext->pipe_open_count);
+                spinlock_increment(DeviceObject);
 
                 // change the power state
-                change_power_state(DeviceObject, false);
+                change_power_state(DeviceObject);
             }
         }
     }
@@ -339,7 +328,7 @@ NTSTATUS mj_create(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP
     IofCompleteRequest(Irp, IO_NO_INCREMENT);
 
     // release the spinlock
-    spinlock_decrement(DeviceObject);
+    spinlock_decrement_notify(DeviceObject);
 
     return status;
 }
@@ -349,7 +338,7 @@ NTSTATUS mj_close(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
     spinlock_increment(DeviceObject);
 
     // get the device extension
-    chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
+    chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
 
     // get the current file object in the irp
     PFILE_OBJECT file = IoGetCurrentIrpStackLocation(Irp)->FileObject;
@@ -366,15 +355,14 @@ NTSTATUS mj_close(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
                 // mark the pipe as free
                 dev_ext->allocated_pipes[pipe_index] = false;
 
-                // decrement the interlocked value
-                // TODO: why is this not using the spinlock_decrement function?
-                InterlockedDecrement(&dev_ext->pipe_open_count);
+                // decrement the pipe count
+                spinlock_decrement(DeviceObject);
             }
         }
     }
 
     // release the spinlock
-    spinlock_decrement(DeviceObject);
+    spinlock_decrement_notify(DeviceObject);
 
     Irp->IoStatus.Status = STATUS_SUCCESS;
     Irp->IoStatus.Information = 0;
@@ -398,7 +386,7 @@ NTSTATUS mj_device_control(__in struct _DEVICE_OBJECT *DeviceObject, __inout str
     spinlock_increment(DeviceObject);
 
     // get the device extension
-    chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
+    chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
 
     // return status
     NTSTATUS status = STATUS_SUCCESS;
@@ -416,7 +404,7 @@ NTSTATUS mj_device_control(__in struct _DEVICE_OBJECT *DeviceObject, __inout str
         // get the values from the stack
         ULONG_PTR buffer_length = stack->Parameters.DeviceIoControl.OutputBufferLength;
         const ULONG io_control_code = stack->Parameters.DeviceIoControl.IoControlCode;
-        usb_chief_vendor_request* vendor_request = (usb_chief_vendor_request*)Irp->AssociatedIrp.SystemBuffer;
+        usb_chief_vendor_request* vendor_request = reinterpret_cast<usb_chief_vendor_request*>(Irp->AssociatedIrp.SystemBuffer);
 
         // check the io control code
         switch (io_control_code) {
@@ -437,12 +425,12 @@ NTSTATUS mj_device_control(__in struct _DEVICE_OBJECT *DeviceObject, __inout str
                 }
                 break;
             case CTL_CODE(FILE_DEVICE_USB, 2, METHOD_BUFFERED, FILE_ANY_ACCESS): // 0x220008
-                status = usb_set_alternate_setting(DeviceObject, dev_ext->usb_config_desc, vendor_request->Reqeuest & 0xff);
+                status = usb_set_alternate_setting(DeviceObject, dev_ext->usb_config_desc, vendor_request->Request & 0xff);
                 break;
             case CTL_CODE(FILE_DEVICE_USB, 3, METHOD_BUFFERED, FILE_ANY_ACCESS): // 0x22000c
                 if (dev_ext->bcdUSB.has_value()) {
                     // copy the bcdUSB value to the vendor request
-                    vendor_request->Reqeuest = dev_ext->bcdUSB.has_value();
+                    vendor_request->Request = dev_ext->bcdUSB.has_value();
 
                     // set the length to 2 bytes
                     Irp->IoStatus.Information = 2;
@@ -469,14 +457,14 @@ NTSTATUS mj_device_control(__in struct _DEVICE_OBJECT *DeviceObject, __inout str
     IofCompleteRequest(Irp, IO_NO_INCREMENT);
 
     // release the spinlock
-    spinlock_decrement(DeviceObject);
+    spinlock_decrement_notify(DeviceObject);
 
     return status;
 }
 
 NTSTATUS mj_power(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *Irp) {
     // get the device extension
-    chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
+    chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);   
 
     // get the current stack location
     PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(Irp);
@@ -536,7 +524,7 @@ NTSTATUS mj_power(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
                     }
 
                     // change the power state to the new value i guess
-                    change_power_state(DeviceObject, false);
+                    change_power_state(DeviceObject);
                     
                     dev_ext->power_1_request_busy = false;
                 }
@@ -594,7 +582,7 @@ NTSTATUS mj_power(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
                             
                             // call the next driver
                             status = PoCallDriver(
-                                ((chief_device_extension*)DeviceObject->DeviceExtension)->attachedDeviceObject,
+                                reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension)->attachedDeviceObject,
                                 Irp
                             );
                         }
@@ -625,7 +613,7 @@ NTSTATUS mj_power(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
 
                         // call the next driver 
                         status = PoCallDriver(
-                            ((chief_device_extension*)DeviceObject->DeviceExtension)->attachedDeviceObject,
+                            reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension)->attachedDeviceObject,
                             Irp
                         );
 
@@ -655,7 +643,7 @@ NTSTATUS mj_power(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
             
             // call the next driver
             status = PoCallDriver(
-                ((chief_device_extension*)DeviceObject->DeviceExtension)->attachedDeviceObject,
+                reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension)->attachedDeviceObject,
                 Irp
             );
 
@@ -664,7 +652,7 @@ NTSTATUS mj_power(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
     }
 
     // release the spinlock
-    spinlock_decrement(DeviceObject);
+    spinlock_decrement_notify(DeviceObject);
 
     // return the status
     return status;
@@ -683,12 +671,12 @@ NTSTATUS mj_system_control(__in struct _DEVICE_OBJECT *DeviceObject, __inout str
 
     // call the next driver
     const NTSTATUS status = IoCallDriver(
-        ((chief_device_extension*)DeviceObject->DeviceExtension)->attachedDeviceObject,
+    reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension)->attachedDeviceObject,
         Irp
     );
 
     // release the spinlock
-    spinlock_decrement(DeviceObject);
+    spinlock_decrement_notify(DeviceObject);
 
     return status;
 }
@@ -758,13 +746,8 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
 
                         // mark if we have a config descriptor
                         if (NT_SUCCESS(status)) {
-                            dev_ext->has_config_desc = true;
-
                             // set the alternate setting to 0
                             status = usb_set_alternate_setting(DeviceObject, dev_ext->usb_config_desc, 0);
-                        }
-                        else {
-                            dev_ext->has_config_desc = false;
                         }
                     }
                     else {
@@ -777,13 +760,13 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
                 }
 
                 IofCompleteRequest(Irp, IO_NO_INCREMENT);
-                spinlock_decrement(DeviceObject);
+                spinlock_decrement_notify(DeviceObject);
                 break;
             }
 
         case IRP_MN_REMOVE_DEVICE:
             // stop everything that is running
-            spinlock_decrement(DeviceObject);
+            spinlock_decrement_notify(DeviceObject);
             dev_ext->is_ejecting = true;
             usb_pipe_abort(DeviceObject);
 
@@ -794,7 +777,7 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
             status = IofCallDriver(dev_ext->attachedDeviceObject, Irp);
 
             // release the spinlock again
-            spinlock_decrement(DeviceObject);
+            spinlock_decrement_notify(DeviceObject);
 
             KeWaitForSingleObject(
                 &dev_ext->pipe_count_empty, Suspended, KernelMode, false, nullptr
@@ -832,12 +815,12 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
                 IofCompleteRequest(Irp, IO_NO_INCREMENT);
             }
 
-            spinlock_decrement(DeviceObject);
+            spinlock_decrement_notify(DeviceObject);
             break;
 
         case IRP_MN_QUERY_REMOVE_DEVICE:
             // check if we have a config descriptor
-            if (!dev_ext->has_config_desc) {
+            if (!dev_ext->usb_config_desc) {
                 // skip the irp
                 IoSkipCurrentIrpStackLocation(Irp);
             }
@@ -859,12 +842,12 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
             status = IofCallDriver(dev_ext->attachedDeviceObject, Irp);
 
             // release the spinlock
-            spinlock_decrement(DeviceObject);
+            spinlock_decrement_notify(DeviceObject);
             break;
 
         case IRP_MN_QUERY_STOP_DEVICE:
             // check if we have a config descriptor
-            if (!dev_ext->has_config_desc) {
+            if (!dev_ext->usb_config_desc) {
                 // skip the irp
                 IoSkipCurrentIrpStackLocation(Irp);
 
@@ -879,13 +862,13 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
             }
 
             // release the spinlock
-            spinlock_decrement(DeviceObject);
+            spinlock_decrement_notify(DeviceObject);
             break;
 
         case IRP_MN_CANCEL_STOP_DEVICE:
         case IRP_MN_CANCEL_REMOVE_DEVICE:
             // check if we have a config descriptor
-            if (!dev_ext->has_config_desc) {
+            if (!dev_ext->usb_config_desc) {
                 // skip the irp
                 IoSkipCurrentIrpStackLocation(Irp);
             }
@@ -907,12 +890,12 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
             status = IofCallDriver(dev_ext->attachedDeviceObject, Irp);
 
             // release the spinlock
-            spinlock_decrement(DeviceObject);
+            spinlock_decrement_notify(DeviceObject);
             break;
 
         case IRP_MN_EJECT:
             // release the spinlock
-            spinlock_decrement(DeviceObject);
+            spinlock_decrement_notify(DeviceObject);
 
             // mark we are ejecting
             dev_ext->is_ejecting = true;
@@ -938,7 +921,7 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
             status = IofCallDriver(dev_ext->attachedDeviceObject, Irp);
 
             // release the spinlock
-            spinlock_decrement(DeviceObject);
+            spinlock_decrement_notify(DeviceObject);
             break;
     }
 
