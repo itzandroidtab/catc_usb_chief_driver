@@ -514,53 +514,44 @@ NTSTATUS mj_power(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
 
     switch (stack->MinorFunction) {
         case IRP_MN_WAIT_WAKE:
-        {
-                // TODO: check this out
-                // get the current power state
-                const POWER_STATE state = dev_ext->current_power_state;
-
-                // check if we are switching to a state we can wake from
-                if ((state.DeviceState != PowerDeviceD0) || (dev_ext->device_capabilities.DeviceWake < state.DeviceState)) {
-                    // copy the current irp stack location to the next
-                    IoCopyCurrentIrpStackLocationToNext(Irp);
-
-                    // create a event
-                    KEVENT event;
-                    KeInitializeEvent(&event, NotificationEvent, false);
-
-                    // forward the request to the next power driver, event will 
-                    // be signaled on completion
-                    status = forward_to_next_power_driver(
-                        dev_ext->attachedDeviceObject,
-                        Irp,
-                        signal_event_complete,
-                        &event
-                    );
-
-                    // check if we need to wait on the request
-                    if (status == STATUS_PENDING) {
-                        // wait for the event to be signaled
-                        KeWaitForSingleObject(
-                            &event,
-                            Suspended,
-                            KernelMode,
-                            false,
-                            nullptr
-                        );
-
-                        // TODO: shouldnt we use the IoStatus.Status here?
-                        // status = Irp->IoStatus.Status;
-                    }
-
-                    // change the power state to the new value i guess
-                    change_power_state(DeviceObject);
-                }
-                else {
+            {
+                // check if the device can wake the system. I dont think the USB chief can
+                // do this but this was in the original code so keeping it here
+                if (dev_ext->device_capabilities.DeviceWake == PowerDeviceUnspecified ||
+                    dev_ext->device_capabilities.SystemWake == PowerSystemUnspecified) 
+                {
                     // set the status to invalid device state
-                    status = Irp->IoStatus.Status = STATUS_INVALID_DEVICE_STATE;
+                    status = Irp->IoStatus.Status = STATUS_NOT_SUPPORTED;
 
                     // complete the irp
                     IofCompleteRequest(Irp, IO_NO_INCREMENT);
+                    break;
+                }
+
+                // create a event
+                KEVENT event;
+                KeInitializeEvent(&event, NotificationEvent, false);
+
+                // the device can wake the system. Forward the request to the next power driver
+                status = forward_to_next_power_driver(
+                    dev_ext->attachedDeviceObject,
+                    Irp,
+                    signal_event_complete,
+                    &event
+                );
+
+                // check if we need to wait on the request
+                if (status == STATUS_PENDING) {
+                    // wait for the event to be signaled
+                    KeWaitForSingleObject(
+                        &event,
+                        Suspended,
+                        KernelMode,
+                        false,
+                        nullptr
+                    );
+
+                    status = Irp->IoStatus.Status;
                 }
             }   
             break;     
