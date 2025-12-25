@@ -18,7 +18,11 @@ static bool delete_is_not_pending(__in struct _DEVICE_OBJECT *DeviceObject) {
     return !dev_ext->is_ejecting && (dev_ext->usb_config_desc != nullptr) && !dev_ext->is_removing && !dev_ext->is_stopped;
 }
 
-static NTSTATUS forward_to_next_power_driver(PDEVICE_OBJECT attachedDeviceObject, PIRP Irp, PIO_COMPLETION_ROUTINE CompletionRoutine = nullptr, void* Context = nullptr) {
+static NTSTATUS forward_to_next_power_driver(
+    PDEVICE_OBJECT attachedDeviceObject, PIRP Irp, 
+    PIO_COMPLETION_ROUTINE CompletionRoutine = nullptr, 
+    void* Context = nullptr)
+{
     // copy the current irp stack location to the next
     IoCopyCurrentIrpStackLocationToNext(Irp);
 
@@ -36,6 +40,33 @@ static NTSTATUS forward_to_next_power_driver(PDEVICE_OBJECT attachedDeviceObject
 
     // call the driver
     return PoCallDriver(attachedDeviceObject, Irp);
+}
+
+static NTSTATUS forward_to_next_driver(
+    PDEVICE_OBJECT attachedDeviceObject, PIRP Irp, 
+    const bool skip = false,
+    PIO_COMPLETION_ROUTINE CompletionRoutine = nullptr, 
+    void* Context = nullptr) 
+{
+    // check if we need to copy the current irp stack location
+    if (!skip) {
+        IoCopyCurrentIrpStackLocationToNext(Irp);
+    } 
+    else {
+        IoSkipCurrentIrpStackLocation(Irp);
+    }
+
+    // check if we have a completion routine
+    if (CompletionRoutine) {
+        // set the completion routine
+        IoSetCompletionRoutine(
+            Irp, CompletionRoutine,
+            Context, true, true, true
+        );
+    }
+
+    // call the driver
+    return IofCallDriver(attachedDeviceObject, Irp);
 }
 
 /**
@@ -680,17 +711,12 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
                 KEVENT event;
                 KeInitializeEvent(&event, NotificationEvent, false);
 
-                // copy the current stack location to the next
-                IoCopyCurrentIrpStackLocationToNext(Irp);
-
-                // get the next stack location
-                IoSetCompletionRoutine(
-                    Irp, signal_event_complete,
-                    &event, true, true, true
-                );
-
                 // call the next driver
-                status = IofCallDriver(dev_ext->attachedDeviceObject, Irp);
+                status = forward_to_next_driver(
+                    dev_ext->attachedDeviceObject, Irp,
+                    false, signal_event_complete,
+                    &event
+                );
 
                 if (status == STATUS_PENDING) {
                     // wait for the event to be signaled
@@ -747,10 +773,7 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
             usb_pipe_abort(DeviceObject);
 
             // copy the current irp stack location to the next
-            IoCopyCurrentIrpStackLocationToNext(Irp);
-
-            // call the next driver
-            status = IofCallDriver(dev_ext->attachedDeviceObject, Irp);
+            status = forward_to_next_driver(dev_ext->attachedDeviceObject, Irp);
 
             // release the spinlock again
             spinlock_decrement_notify(DeviceObject);
@@ -784,10 +807,7 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
             
             if (NT_SUCCESS(status)) {
                 // Forward the IRP to the next driver
-                IoCopyCurrentIrpStackLocationToNext(Irp);
-
-                // call the next driver
-                status = IofCallDriver(dev_ext->attachedDeviceObject, Irp);
+                status = forward_to_next_driver(dev_ext->attachedDeviceObject, Irp);
             }
             else {
                 Irp->IoStatus.Status = status;
@@ -800,8 +820,10 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
         case IRP_MN_QUERY_REMOVE_DEVICE:
             // check if we have a config descriptor
             if (!dev_ext->usb_config_desc) {
-                // skip the irp
-                IoSkipCurrentIrpStackLocation(Irp);
+                // skip the irp and call the next driver
+                status = forward_to_next_driver(
+                    dev_ext->attachedDeviceObject, Irp, true
+                );
             }
             else {
                 dev_ext->is_removing = true;
@@ -813,12 +835,9 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
 
                 Irp->IoStatus.Status = STATUS_SUCCESS;
 
-                // copy the current irp stack location to the next
-                IoCopyCurrentIrpStackLocationToNext(Irp);
+                // call the next driver
+                status = forward_to_next_driver(dev_ext->attachedDeviceObject, Irp);
             }
-
-            // call the next driver
-            status = IofCallDriver(dev_ext->attachedDeviceObject, Irp);
 
             // release the spinlock
             spinlock_decrement_notify(DeviceObject);
@@ -828,10 +847,9 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
             // check if we have a config descriptor
             if (!dev_ext->usb_config_desc) {
                 // skip the irp
-                IoSkipCurrentIrpStackLocation(Irp);
-
-                // call the next driver
-                status = IofCallDriver(dev_ext->attachedDeviceObject, Irp);
+                status = forward_to_next_driver(
+                    dev_ext->attachedDeviceObject, Irp, true
+                );
             }
             else {
                 dev_ext->is_stopped = true;
@@ -849,7 +867,9 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
             // check if we have a config descriptor
             if (!dev_ext->usb_config_desc) {
                 // skip the irp
-                IoSkipCurrentIrpStackLocation(Irp);
+                status = forward_to_next_driver(
+                    dev_ext->attachedDeviceObject, Irp, true
+                );
             }
             else {
                 if (stack->MinorFunction == IRP_MN_CANCEL_STOP_DEVICE) {
@@ -861,12 +881,9 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
 
                 Irp->IoStatus.Status = STATUS_SUCCESS;
 
-                // Forward the IRP to the next driver
-                IoCopyCurrentIrpStackLocationToNext(Irp);
+                // forward the IRP to the next driver
+                status = forward_to_next_driver(dev_ext->attachedDeviceObject, Irp);
             }
-
-            // call the next driver
-            status = IofCallDriver(dev_ext->attachedDeviceObject, Irp);
 
             // release the spinlock
             spinlock_decrement_notify(DeviceObject);
@@ -885,19 +902,13 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
             // set the irp status to success
             Irp->IoStatus.Status = STATUS_SUCCESS;
 
-            // copy the current irp stack location to the next
-            IoCopyCurrentIrpStackLocationToNext(Irp);
-
-            // call the next driver
-            status = IofCallDriver(dev_ext->attachedDeviceObject, Irp);
+            // forward to the next driver
+            status = forward_to_next_driver(dev_ext->attachedDeviceObject, Irp);
             break;
 
         default:
-            // Forward the IRP to the next driver
-            IoCopyCurrentIrpStackLocationToNext(Irp);
-
-            // call the next driver
-            status = IofCallDriver(dev_ext->attachedDeviceObject, Irp);
+            // forward to the next driver
+            status = forward_to_next_driver(dev_ext->attachedDeviceObject, Irp);
 
             // release the spinlock
             spinlock_decrement_notify(DeviceObject);
