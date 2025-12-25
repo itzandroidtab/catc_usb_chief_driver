@@ -632,13 +632,11 @@ NTSTATUS mj_power(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
 
         case IRP_MN_POWER_SEQUENCE:
         case IRP_MN_QUERY_POWER:
+        default:
             status = forward_to_next_power_driver(
                 dev_ext->attachedDeviceObject,
                 Irp
             );
-            break;
-
-        default:
             break;
     }
 
