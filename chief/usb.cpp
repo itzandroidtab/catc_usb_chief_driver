@@ -83,7 +83,7 @@ static NTSTATUS usb_bulk_or_interrupt_transfer_complete(PDEVICE_OBJECT DeviceObj
     return STATUS_MORE_PROCESSING_REQUIRED;
 }
 
-_URB_BULK_OR_INTERRUPT_TRANSFER* usb_create_bulk_or_interrupt_transfer(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *Irp, USBD_PIPE_INFORMATION* Payload, bool isInDirection) {
+_URB_BULK_OR_INTERRUPT_TRANSFER* usb_create_bulk_or_interrupt_transfer(__inout struct _IRP *Irp, USBD_PIPE_INFORMATION* Payload, bool isInDirection) {
     // get the amount of data to transfer
     const int length = (Irp->MdlAddress) ? MmGetMdlByteCount(Irp->MdlAddress) : 0;
 
@@ -116,9 +116,6 @@ _URB_BULK_OR_INTERRUPT_TRANSFER* usb_create_bulk_or_interrupt_transfer(__in stru
 }
 
 NTSTATUS usb_send_bulk_or_interrupt_transfer(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *Irp, bool read) {
-    // get the device extension
-    chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
-
     // get the current stack location
     PIO_STACK_LOCATION current_stack = IoGetCurrentIrpStackLocation(Irp);
 
@@ -140,8 +137,7 @@ NTSTATUS usb_send_bulk_or_interrupt_transfer(__in struct _DEVICE_OBJECT *DeviceO
     USBD_PIPE_INFORMATION* pipe_info = reinterpret_cast<USBD_PIPE_INFORMATION*>(file->FsContext);
 
     _URB_BULK_OR_INTERRUPT_TRANSFER* request = usb_create_bulk_or_interrupt_transfer(
-        DeviceObject, Irp,
-        pipe_info, read
+        Irp, pipe_info, read
     );
 
     if (!request) {
@@ -166,6 +162,9 @@ NTSTATUS usb_send_bulk_or_interrupt_transfer(__in struct _DEVICE_OBJECT *DeviceO
 
     // acquire the spinlock
     spinlock_increment(DeviceObject);
+
+    // get the device extension
+    chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
 
     return IofCallDriver(dev_ext->attachedDeviceObject, Irp);
 }
@@ -474,7 +473,7 @@ NTSTATUS usb_pipe_abort(_DEVICE_OBJECT* DeviceObject) {
         urb.PipeHandle = interface_info->Pipes[i].PipeHandle;
 
         // send the URB
-    status = usb_send_urb(DeviceObject, reinterpret_cast<PURB>(&urb));
+        status = usb_send_urb(DeviceObject, reinterpret_cast<PURB>(&urb));
 
         // check if we have an error
         if (!NT_SUCCESS(status)) {
@@ -492,9 +491,6 @@ NTSTATUS usb_pipe_abort(_DEVICE_OBJECT* DeviceObject) {
 }
 
 NTSTATUS usb_get_configuration_desc(_DEVICE_OBJECT* DeviceObject, PUSB_CONFIGURATION_DESCRIPTOR& OutDescriptor) {
-    // get the device extension
-    chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
-
     // initial buffer size. This will be increased if needed
     ULONG buffer_size = 64;
 
@@ -563,9 +559,6 @@ NTSTATUS usb_get_configuration_desc(_DEVICE_OBJECT* DeviceObject, PUSB_CONFIGURA
 }
 
 NTSTATUS usb_get_device_desc(_DEVICE_OBJECT* DeviceObject, USB_DEVICE_DESCRIPTOR& OutDescriptor) {
-    // get the device extension
-    chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
-
     // create a usb request
     _URB_CONTROL_DESCRIPTOR_REQUEST usb_request = {};
 
@@ -604,9 +597,6 @@ NTSTATUS usb_clear_config_desc(_DEVICE_OBJECT* DeviceObject) {
             dev_ext->usb_config_desc = nullptr;
         }
     }
-
-    // clear the is_stopped flag
-    dev_ext->is_stopped = false;
 
     return status;
 }

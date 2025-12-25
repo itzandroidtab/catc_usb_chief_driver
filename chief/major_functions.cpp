@@ -803,6 +803,9 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
             // select the config descriptor
             status = usb_clear_config_desc(DeviceObject);
 
+            // clear the is_stopped flag
+            dev_ext->is_stopped = false;
+            
             if (NT_SUCCESS(status)) {
                 // Forward the IRP to the next driver
                 IoCopyCurrentIrpStackLocationToNext(Irp);
