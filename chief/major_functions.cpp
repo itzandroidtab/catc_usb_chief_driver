@@ -499,11 +499,10 @@ NTSTATUS mj_power(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
                     KeInitializeEvent(&event, NotificationEvent, false);
 
                     // get the next irp stack location
-                    PIO_STACK_LOCATION stack = IoGetNextIrpStackLocation(Irp);
-
-                    stack->CompletionRoutine = signal_event_complete;
-                    stack->Context = &event;
-                    stack->Control = SL_INVOKE_ON_SUCCESS | SL_INVOKE_ON_ERROR | SL_INVOKE_ON_CANCEL;
+                    IoSetCompletionRoutine(
+                        Irp, signal_event_complete,
+                        &event, true, true, true
+                    );
 
                     PoStartNextPowerIrp(Irp);
                     status = PoCallDriver(dev_ext->attachedDeviceObject, Irp);
@@ -599,13 +598,11 @@ NTSTATUS mj_power(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
 
                         // check if we need to add a new irp call
                         if (u) {
-                            // get the next irp stack location
-                            PIO_STACK_LOCATION stack = IoGetNextIrpStackLocation(Irp);
-
                             // the callback will handle releasing the spinlock
-                            stack->CompletionRoutine = power_state_systemworking_complete;
-                            stack->Context = nullptr;
-                            stack->Control = SL_INVOKE_ON_SUCCESS | SL_INVOKE_ON_ERROR | SL_INVOKE_ON_CANCEL;
+                            IoSetCompletionRoutine(
+                                Irp, power_state_systemworking_complete, 
+                                nullptr, true, true, true
+                            )
                         }
 
                         // mark we are ready for the next power irp
@@ -708,10 +705,10 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
                 IoCopyCurrentIrpStackLocationToNext(Irp);
 
                 // get the next stack location
-                PIO_STACK_LOCATION nextStack = IoGetNextIrpStackLocation(Irp);
-                nextStack->Context = &event;
-                nextStack->CompletionRoutine = signal_event_complete;
-                nextStack->Control = SL_INVOKE_ON_SUCCESS | SL_INVOKE_ON_ERROR | SL_INVOKE_ON_CANCEL;
+                IoSetCompletionRoutine(
+                    Irp, signal_event_complete,
+                    &event, true, true, true
+                );
 
                 // call the next driver
                 status = IofCallDriver(dev_ext->attachedDeviceObject, Irp);
