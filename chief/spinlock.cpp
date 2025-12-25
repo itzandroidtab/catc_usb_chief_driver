@@ -46,3 +46,21 @@ LONG spinlock_decrement_notify(PDEVICE_OBJECT DeviceObject) {
     // return the new count
     return new_count;
 }
+
+LONG spinlock_decrement(PDEVICE_OBJECT DeviceObject) {
+    // get the device extension
+    chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
+
+    // acquire the spinlock
+    KIRQL irql;
+    KeAcquireSpinLock(&dev_ext->device_lock, &irql);
+    
+    // decrement the lock count
+    LONG new_count = InterlockedDecrement(&dev_ext->pipe_open_count);
+
+    // release the spinlock
+    KeReleaseSpinLock(&dev_ext->device_lock, irql);
+
+    // return the new count
+    return new_count;
+}

@@ -176,8 +176,6 @@ static void power_request_complete(PDEVICE_OBJECT DeviceObject, UCHAR MinorFunct
     PoCallDriver(dev_ext->attachedDeviceObject, dev_ext->power_irp);
 
     // clear the power irp pointer
-    // TODO: this was done below the spinlock release. I think
-    // it makes more sense to do it before releasing the spinlock
     dev_ext->power_irp = nullptr;
 
     // release the spinlock
@@ -324,8 +322,7 @@ NTSTATUS mj_create(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP
                 dev_ext->allocated_pipes[pipe_index] = true;
 
                 // increment the interlocked value
-                // TODO: why is this not using the spinlock_increment function?
-                InterlockedIncrement(&dev_ext->pipe_open_count);
+                spinlock_increment(DeviceObject);
 
                 // change the power state
                 change_power_state(DeviceObject, false);
@@ -366,9 +363,8 @@ NTSTATUS mj_close(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
                 // mark the pipe as free
                 dev_ext->allocated_pipes[pipe_index] = false;
 
-                // decrement the interlocked value
-                // TODO: why is this not using the spinlock_decrement function?
-                InterlockedDecrement(&dev_ext->pipe_open_count);
+                // decrement the pipe count
+                spinlock_decrement(DeviceObject);
             }
         }
     }

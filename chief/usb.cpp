@@ -64,7 +64,7 @@ static NTSTATUS usb_bulk_or_interrupt_transfer_complete(PDEVICE_OBJECT DeviceObj
         IoGetCurrentIrpStackLocation(Irp)->Control |= SL_PENDING_RETURNED;
     }
     
-    // TODO: Shouldnt the spinlock be released at the end of this function?
+    // decrement the pipe open count
     spinlock_decrement_notify(DeviceObject);
 
     // get the device extension
@@ -490,9 +490,8 @@ NTSTATUS usb_pipe_abort(_DEVICE_OBJECT* DeviceObject) {
         // mark the pipe as free
         dev_ext->allocated_pipes[i] = false;
 
-        // decrement the interlocked value
-        // TODO: why is this not using the spinlock_decrement_notify function?
-        InterlockedDecrement(&dev_ext->pipe_open_count);
+        // decrement the pipe count
+        spinlock_decrement(DeviceObject);
     }
 
     return status;
