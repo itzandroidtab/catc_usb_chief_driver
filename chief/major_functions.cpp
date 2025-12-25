@@ -18,6 +18,17 @@ static bool delete_is_not_pending(__in struct _DEVICE_OBJECT *DeviceObject) {
     return !dev_ext->is_ejecting && (dev_ext->usb_config_desc != nullptr) && !dev_ext->is_removing && !dev_ext->is_stopped;
 }
 
+static NTSTATUS forward_to_next_power_driver(PDEVICE_OBJECT attachedDeviceObject, PIRP Irp) {
+    // copy the current irp stack location to the next
+    IoCopyCurrentIrpStackLocationToNext(Irp);
+
+    // mark we are ready for the next power irp
+    PoStartNextPowerIrp(Irp);
+
+    // call the driver
+    return PoCallDriver(attachedDeviceObject, Irp);
+}
+
 /**
  * @brief Get the pipe from unicode str
  * 
@@ -158,14 +169,8 @@ static void power_request_complete(PDEVICE_OBJECT DeviceObject, UCHAR MinorFunct
     // get the device extension
     chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
 
-    // copy the current irp stack location to the next
-    IoCopyCurrentIrpStackLocationToNext(dev_ext->power_irp);
-
-    // Mark we are done with the power request
-    PoStartNextPowerIrp(dev_ext->power_irp);
-
-    // call the driver
-    PoCallDriver(dev_ext->attachedDeviceObject, dev_ext->power_irp);
+    // forward the request to the next power driver
+    (void)forward_to_next_power_driver(dev_ext->attachedDeviceObject, dev_ext->power_irp);
 
     // clear the power irp pointer
     dev_ext->power_irp = nullptr;
@@ -575,15 +580,8 @@ NTSTATUS mj_power(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
                             );
                         }
                         else {
-                            // copy the current irp stack location to the next
-                            IoCopyCurrentIrpStackLocationToNext(Irp);
-
-                            // mark we are ready for the next power irp
-                            PoStartNextPowerIrp(Irp);
-                            
-                            // call the next driver
-                            status = PoCallDriver(
-                                reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension)->attachedDeviceObject,
+                            status = forward_to_next_power_driver(
+                                dev_ext->attachedDeviceObject,
                                 Irp
                             );
                         }
@@ -612,7 +610,7 @@ NTSTATUS mj_power(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
 
                         // call the next driver 
                         status = PoCallDriver(
-                            reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension)->attachedDeviceObject,
+                            dev_ext->attachedDeviceObject,
                             Irp
                         );
 
@@ -634,17 +632,11 @@ NTSTATUS mj_power(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
 
         case IRP_MN_POWER_SEQUENCE:
         case IRP_MN_QUERY_POWER:
-            // copy the current irp stack location to the next
-            IoCopyCurrentIrpStackLocationToNext(Irp);
-
-            // mark we are ready for the next power irp
-            PoStartNextPowerIrp(Irp);
-            
-            // call the next driver
-            status = PoCallDriver(
-                reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension)->attachedDeviceObject,
+            status = forward_to_next_power_driver(
+                dev_ext->attachedDeviceObject,
                 Irp
             );
+            break;
 
         default:
             break;
