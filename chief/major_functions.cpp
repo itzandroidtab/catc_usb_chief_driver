@@ -489,7 +489,7 @@ NTSTATUS mj_power(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
 
                 // check if we are already in the PowerDeviceD0 state
                 if (state.DeviceState != PowerDeviceD0 || dev_ext->target_power_state.DeviceState < state.DeviceState) {
-                    dev_ext->power_1_request_busy = true;
+                    dev_ext->wait_wake_in_progress = true;
 
                     // copy the current irp stack location to the next
                     IoCopyCurrentIrpStackLocationToNext(Irp);
@@ -525,7 +525,7 @@ NTSTATUS mj_power(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
                     // change the power state to the new value i guess
                     change_power_state(DeviceObject);
                     
-                    dev_ext->power_1_request_busy = false;
+                    dev_ext->wait_wake_in_progress = false;
                 }
                 else {
                     // set the status to invalid device state
@@ -550,7 +550,7 @@ NTSTATUS mj_power(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
                         // check if the system state is not working. If its not working we need
                         // to map it to a device power state
                         if (system_state != PowerSystemWorking) {
-                            if (dev_ext->power_1_request_busy) {
+                            if (dev_ext->wait_wake_in_progress) {
                                 device_state.DeviceState = dev_ext->device_capabilities.DeviceState[system_state];
                             }
                             else {
@@ -602,7 +602,7 @@ NTSTATUS mj_power(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
                             IoSetCompletionRoutine(
                                 Irp, power_state_systemworking_complete, 
                                 nullptr, true, true, true
-                            )
+                            );
                         }
 
                         // mark we are ready for the next power irp
