@@ -18,9 +18,18 @@ static bool delete_is_not_pending(__in struct _DEVICE_OBJECT *DeviceObject) {
     return !dev_ext->is_ejecting && (dev_ext->usb_config_desc != nullptr) && !dev_ext->is_removing && !dev_ext->is_stopped;
 }
 
-static NTSTATUS forward_to_next_power_driver(PDEVICE_OBJECT attachedDeviceObject, PIRP Irp) {
+static NTSTATUS forward_to_next_power_driver(PDEVICE_OBJECT attachedDeviceObject, PIRP Irp, PIO_COMPLETION_ROUTINE CompletionRoutine = nullptr, void* Context = nullptr) {
     // copy the current irp stack location to the next
     IoCopyCurrentIrpStackLocationToNext(Irp);
+
+    // check if we have a completion routine
+    if (CompletionRoutine) {
+        // set the completion routine
+        IoSetCompletionRoutine(
+            Irp, CompletionRoutine,
+            Context, true, true, true
+        );
+    }
 
     // mark we are ready for the next power irp
     PoStartNextPowerIrp(Irp);
@@ -515,14 +524,14 @@ NTSTATUS mj_power(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
                     KEVENT event;
                     KeInitializeEvent(&event, NotificationEvent, false);
 
-                    // get the next irp stack location
-                    IoSetCompletionRoutine(
-                        Irp, signal_event_complete,
-                        &event, true, true, true
+                    // forward the request to the next power driver, event will 
+                    // be signaled on completion
+                    status = forward_to_next_power_driver(
+                        dev_ext->attachedDeviceObject,
+                        Irp,
+                        signal_event_complete,
+                        &event
                     );
-
-                    PoStartNextPowerIrp(Irp);
-                    status = PoCallDriver(dev_ext->attachedDeviceObject, Irp);
 
                     // check if we need to wait on the request
                     if (status == STATUS_PENDING) {
@@ -593,25 +602,13 @@ NTSTATUS mj_power(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
                         // update the power state
                         const bool u = update_power_state(DeviceObject, stack->Parameters.Power.State.DeviceState);
 
-                        // copy the current irp stack location to the next
-                        IoCopyCurrentIrpStackLocationToNext(Irp);
-
-                        // check if we need to add a new irp call
-                        if (u) {
-                            // the callback will handle releasing the spinlock
-                            IoSetCompletionRoutine(
-                                Irp, power_state_systemworking_complete, 
-                                nullptr, true, true, true
-                            );
-                        }
-
-                        // mark we are ready for the next power irp
-                        PoStartNextPowerIrp(Irp);
-
-                        // call the next driver 
-                        status = PoCallDriver(
-                            dev_ext->attachedDeviceObject,
-                            Irp
+                        // forward the request to the next power driver. Add
+                        // the completion routine if needed based on the update 
+                        // result
+                        status = forward_to_next_power_driver(
+                            dev_ext->attachedDeviceObject, Irp, 
+                            (u ? power_state_systemworking_complete : nullptr), 
+                            nullptr
                         );
 
                         // check if we need to return early
