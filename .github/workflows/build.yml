@@ -60,10 +60,9 @@ jobs:
         $setupPath = "${driveLetter}:\KitSetup.exe"
         
         # Install DDK fully unattended - /ui-level EXPRESS skips confirmation prompts
-        & $setupPath /install "{45292B3D-2D37-4048-494A-4B4C4D4E4F50}" /ui-level EXPRESS /no-view /install-location C:\WinDDK\7600.16385.1 2>&1 | Out-Host
+        & $setupPath /install "{45292B3D-2D37-4048-494A-4B4C4D4E4F50}" /ui-level EXPRESS /no-view /install-location ${{github.workspace}} 2>&1 | Out-Host
 
-        ls "C:\WinDDK\"
-        ls "C:\WinDDK\7600.16385.1"
+        ls ${{github.workspace}}
         
         Write-Host "Dismounting ISO..."
         Dismount-DiskImage -ImagePath $ddkIso
@@ -75,7 +74,7 @@ jobs:
       shell: powershell
       run: |
         # Check for Windows 7 DDK installation
-        $ddkPath = "C:\WinDDK\7600.16385.1"
+        $ddkPath = "${{github.workspace}}\7600.16385.1"
         
         if (Test-Path $ddkPath) {
           Write-Host "Found DDK at: $ddkPath"
