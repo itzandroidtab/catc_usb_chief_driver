@@ -127,15 +127,16 @@ static NTSTATUS change_power_state(_DEVICE_OBJECT* DeviceObject, const bool a2) 
         return STATUS_SUCCESS;
     }
 
+    const LONG pipe_count = spinlock_get_count(DeviceObject);
+    
     // TODO: figure out what the remainder of this function does. It doesnt
     // make too much sense
-    // TODO: dont we need to do anything with the device_lock spinlock here?
     if (a2) {
-        if (dev_ext->pipe_open_count) {
+        if (pipe_count) {
             return STATUS_SUCCESS;
         }
     }
-    else if (!dev_ext->pipe_open_count) {
+    else if (!pipe_count) {
         return STATUS_SUCCESS;
     }
 
