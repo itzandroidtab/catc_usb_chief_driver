@@ -77,8 +77,8 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host "  Certificate installed!" -ForegroundColor Green
 
 # Copy INF to build directory
-Copy-Item "build\usbchief.sys" -Destination "." -Force
-Copy-Item "build\usbchief.pdb" -Destination "." -Force
+Copy-Item "build\usbchief.sys" -Destination "." -Force -ErrorAction Ignore
+Copy-Item "build\usbchief.pdb" -Destination "." -Force -ErrorAction Ignore
 
 # Step 5: Sign the .sys file
 Write-Host "[5/7] Signing usbchief.sys..." -ForegroundColor Yellow
