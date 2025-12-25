@@ -27,7 +27,6 @@ struct chief_device_extension {
   PUSB_CONFIGURATION_DESCRIPTOR usb_config_desc;
   PUSBD_INTERFACE_INFORMATION usb_interface_info;
   DEVICE_CAPABILITIES device_capabilities;
-  IRP *power_irp;
   KEVENT pipe_count_empty;
   KEVENT event1;
   KEVENT event2;
@@ -44,5 +43,9 @@ struct chief_device_extension {
 
   // The BCD version of the connected USB device
   maybe<unsigned short> bcdUSB;
+
+  // count of active power irps. Should only be modified 
+  // using Interlocked functions
+  LONG power_irp_count;
 };
 

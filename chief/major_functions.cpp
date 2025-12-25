@@ -143,7 +143,7 @@ static NTSTATUS change_power_state(_DEVICE_OBJECT* DeviceObject) {
     chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
 
     // check if we have a power irq pending or we have a power request busy
-    if (dev_ext->power_irp || dev_ext->power_request_busy) {
+    if (dev_ext->power_irp_count || dev_ext->power_request_busy) {
         return STATUS_SUCCESS;
     }
 
@@ -178,11 +178,14 @@ static void power_request_complete(PDEVICE_OBJECT DeviceObject, UCHAR MinorFunct
     // get the device extension
     chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
 
+    // get the irp from the context
+    PIRP Irp = reinterpret_cast<PIRP>(Context);
+    
     // forward the request to the next power driver
-    (void)forward_to_next_power_driver(dev_ext->attachedDeviceObject, dev_ext->power_irp);
+    (void)forward_to_next_power_driver(dev_ext->attachedDeviceObject, Irp);
 
-    // clear the power irp pointer
-    dev_ext->power_irp = nullptr;
+    // decrement the power irp count
+    InterlockedDecrement(&dev_ext->power_irp_count);
 
     // release the spinlock
     spinlock_decrement_notify(DeviceObject);
@@ -551,7 +554,7 @@ NTSTATUS mj_power(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
                         // check if we need to change the power state
                         if (device_state.DeviceState != dev_ext->current_power_state.DeviceState) {
                             // store the current IRP
-                            dev_ext->power_irp = Irp;
+                            InterlockedIncrement(&dev_ext->power_irp_count);
 
                             // do a power request. The callback will release the spinlock
                             return PoRequestPowerIrp(
@@ -559,7 +562,7 @@ NTSTATUS mj_power(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
                                 IRP_MN_SET_POWER,
                                 device_state,
                                 power_request_complete,
-                                nullptr,
+                                Irp,
                                 nullptr
                             );
                         }
