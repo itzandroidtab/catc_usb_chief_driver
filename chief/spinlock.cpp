@@ -16,7 +16,7 @@ void spinlock_increment(PDEVICE_OBJECT DeviceObject) {
     KeReleaseSpinLock(&dev_ext->device_lock, irql);
 }
 
-LONG spinlock_decrement(PDEVICE_OBJECT DeviceObject) {
+LONG spinlock_decrement_notify(PDEVICE_OBJECT DeviceObject) {
     // get the device extension
     chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
 

@@ -65,7 +65,7 @@ static NTSTATUS usb_bulk_or_interrupt_transfer_complete(PDEVICE_OBJECT DeviceObj
     }
     
     // TODO: Shouldnt the spinlock be released at the end of this function?
-    spinlock_decrement(DeviceObject);
+    spinlock_decrement_notify(DeviceObject);
 
     // get the device extension
     chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
@@ -491,7 +491,7 @@ NTSTATUS usb_pipe_abort(_DEVICE_OBJECT* DeviceObject) {
         dev_ext->allocated_pipes[i] = false;
 
         // decrement the interlocked value
-        // TODO: why is this not using the spinlock_decrement function?
+        // TODO: why is this not using the spinlock_decrement_notify function?
         InterlockedDecrement(&dev_ext->pipe_open_count);
     }
 
