@@ -67,21 +67,18 @@ static NTSTATUS usb_bulk_or_interrupt_transfer_complete(PDEVICE_OBJECT DeviceObj
     // decrement the pipe open count
     spinlock_decrement_notify(DeviceObject);
 
-    // get the device extension
-    chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;
+    // get the context urb
+    _URB_BULK_OR_INTERRUPT_TRANSFER* urb = (_URB_BULK_OR_INTERRUPT_TRANSFER*)Context;
 
     // set the irp status to success
     Irp->IoStatus.Status = STATUS_SUCCESS;
-    Irp->IoStatus.Information = dev_ext->bulk_interrupt_request->TransferBufferLength;
+    Irp->IoStatus.Information = urb->TransferBufferLength;
 
     // complete the irp
     IofCompleteRequest(Irp, IO_NO_INCREMENT);
 
     // free the bulk or interrupt request
-    ExFreePool(dev_ext->bulk_interrupt_request);
-
-    // clear the bulk or interrupt request pointer
-    dev_ext->bulk_interrupt_request = nullptr;
+    ExFreePool(urb);
 
     return STATUS_MORE_PROCESSING_REQUIRED;
 }
@@ -157,9 +154,6 @@ NTSTATUS usb_send_bulk_or_interrupt_transfer(__in struct _DEVICE_OBJECT *DeviceO
         return STATUS_INSUFFICIENT_RESOURCES;
     }
 
-    // store the request in the device extension for later use
-    dev_ext->bulk_interrupt_request = request;
-
     // get the next stack location
     PIO_STACK_LOCATION stack = IoGetNextIrpStackLocation(Irp);
 
@@ -167,7 +161,7 @@ NTSTATUS usb_send_bulk_or_interrupt_transfer(__in struct _DEVICE_OBJECT *DeviceO
     stack->Parameters.DeviceIoControl.IoControlCode = IOCTL_INTERNAL_USB_SUBMIT_URB;
     stack->Parameters.Others.Argument1 = request;
     stack->CompletionRoutine = usb_bulk_or_interrupt_transfer_complete;
-    stack->Context = DeviceObject;
+    stack->Context = request;
     stack->Control = SL_INVOKE_ON_SUCCESS | SL_INVOKE_ON_ERROR | SL_INVOKE_ON_CANCEL;
 
     // acquire the spinlock

@@ -28,7 +28,6 @@ struct chief_device_extension {
   PUSBD_INTERFACE_INFORMATION usb_interface_info;
   DEVICE_CAPABILITIES device_capabilities;
   IRP *power_irp;
-  _URB_BULK_OR_INTERRUPT_TRANSFER *bulk_interrupt_request;
   KEVENT pipe_count_empty;
   KEVENT event1;
   KEVENT event2;
