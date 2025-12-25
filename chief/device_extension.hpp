@@ -39,7 +39,6 @@ struct chief_device_extension {
   volatile bool is_removing;
   volatile bool is_stopped;
   volatile bool power_request_busy;
-  POWER_STATE target_power_state;
 
   // The BCD version of the connected USB device
   maybe<unsigned short> bcdUSB;

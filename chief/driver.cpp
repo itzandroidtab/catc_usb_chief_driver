@@ -177,12 +177,10 @@ static NTSTATUS add_device(__in struct _DRIVER_OBJECT *DriverObject, __in struct
     dev_ext->device_capabilities.Version = 1;
     dev_ext->device_capabilities.Address = static_cast<ULONG>(-1);
     dev_ext->device_capabilities.UINumber = static_cast<ULONG>(-1);
+    dev_ext->device_capabilities.DeviceWake = PowerDeviceUnspecified;
 
     // start the device
     io_call_start_device(dev_ext->attachedDeviceObject, &dev_ext->device_capabilities);
-
-    // set the current power state to unspecified
-    dev_ext->target_power_state.DeviceState = PowerDeviceUnspecified;
 
     // acquire the spinlock
     spinlock_increment(device_object);

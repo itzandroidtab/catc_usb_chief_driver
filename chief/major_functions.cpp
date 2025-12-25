@@ -107,7 +107,7 @@ static void set_power_complete(PDEVICE_OBJECT DeviceObject, UCHAR MinorFunction,
     // get the device extension
     chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
 
-    if (PowerState.DeviceState < dev_ext->target_power_state.DeviceState) {
+    if (PowerState.DeviceState < dev_ext->device_capabilities.DeviceWake) {
         // set the event to signal the power request is complete
         KeSetEvent(&dev_ext->power_complete_event, EVENT_INCREMENT, false);
     }
@@ -144,7 +144,7 @@ static NTSTATUS change_power_state_impl(_DEVICE_OBJECT* DeviceObject, const POWE
     // check if we have a pending status
     if (status == STATUS_PENDING) {
         // check if we need to wait for the request to complete
-        if (state.DeviceState < dev_ext->target_power_state.DeviceState) {
+        if (state.DeviceState < dev_ext->device_capabilities.DeviceWake) {
             KeWaitForSingleObject(
                 &dev_ext->power_complete_event,
                 Suspended,
@@ -187,7 +187,8 @@ static NTSTATUS change_power_state(_DEVICE_OBJECT* DeviceObject) {
     }
 
     // get the power state
-    POWER_STATE state = dev_ext->target_power_state;
+    POWER_STATE state;
+    state.DeviceState = dev_ext->device_capabilities.DeviceWake;
 
     // check if we are currently in a working, unspecified or 
     // hibernate state (we only pass here if we are in a 
@@ -518,14 +519,8 @@ NTSTATUS mj_power(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
                 // get the current power state
                 const POWER_STATE state = dev_ext->current_power_state;
 
-                // check if the device is already awake
-                const DEVICE_POWER_STATE device_wake = dev_ext->device_capabilities.DeviceWake;
-
-                // set target_power_state to the device wake state
-                dev_ext->target_power_state.DeviceState = device_wake;
-
-                // check if we are already in the PowerDeviceD0 state
-                if (state.DeviceState != PowerDeviceD0 || dev_ext->target_power_state.DeviceState < state.DeviceState) {
+                // check if we are switching to a state we can wake from
+                if ((state.DeviceState != PowerDeviceD0) || (dev_ext->device_capabilities.DeviceWake < state.DeviceState)) {
                     // copy the current irp stack location to the next
                     IoCopyCurrentIrpStackLocationToNext(Irp);
 
