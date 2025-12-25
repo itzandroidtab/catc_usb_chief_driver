@@ -9,7 +9,7 @@ extern "C" {
 #include "maybe.hpp"
 
 struct usb_chief_vendor_request {
-    unsigned short Reqeuest;
+    unsigned short Request;
     unsigned short value;
     unsigned short index;
     unsigned short length;

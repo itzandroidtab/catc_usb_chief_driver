@@ -425,12 +425,12 @@ NTSTATUS mj_device_control(__in struct _DEVICE_OBJECT *DeviceObject, __inout str
                 }
                 break;
             case CTL_CODE(FILE_DEVICE_USB, 2, METHOD_BUFFERED, FILE_ANY_ACCESS): // 0x220008
-                status = usb_set_alternate_setting(DeviceObject, dev_ext->usb_config_desc, vendor_request->Reqeuest & 0xff);
+                status = usb_set_alternate_setting(DeviceObject, dev_ext->usb_config_desc, vendor_request->Request & 0xff);
                 break;
             case CTL_CODE(FILE_DEVICE_USB, 3, METHOD_BUFFERED, FILE_ANY_ACCESS): // 0x22000c
                 if (dev_ext->bcdUSB.has_value()) {
                     // copy the bcdUSB value to the vendor request
-                    vendor_request->Reqeuest = dev_ext->bcdUSB.has_value();
+                    vendor_request->Request = dev_ext->bcdUSB.has_value();
 
                     // set the length to 2 bytes
                     Irp->IoStatus.Information = 2;
