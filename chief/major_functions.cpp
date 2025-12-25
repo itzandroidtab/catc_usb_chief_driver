@@ -208,31 +208,6 @@ static NTSTATUS power_state_systemworking_complete(PDEVICE_OBJECT DeviceObject, 
     return STATUS_SUCCESS;
 }
 
-static bool update_power_state(_DEVICE_OBJECT* DeviceObject, const DEVICE_POWER_STATE state) {
-    // check if we are changing to a non D0 state
-    if (state == PowerDeviceD0) {
-        return true;
-    }
-    
-    // TODO: this doesnt do anything. It copies the state to the 
-    // current_power_state but it does extra checking that seems 
-    // useless
-    if (state > PowerDeviceD0) {
-        // get the device extension
-        chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
-
-        if (state <= PowerDeviceD2) {
-            dev_ext->current_power_state.DeviceState = state;
-        }
-        else if (state == PowerDeviceD3) {
-            // set the current power state to D3
-            dev_ext->current_power_state.DeviceState = PowerDeviceD3;
-        }
-    }
-
-    return false;
-}
-
 static DEVICE_POWER_STATE system_state_to_device_power_state(_DEVICE_OBJECT* DeviceObject, SYSTEM_POWER_STATE state) {
     // check if we have a valid state
     if (state >= POWER_SYSTEM_MAXIMUM) {
@@ -589,6 +564,7 @@ NTSTATUS mj_power(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
                             );
                         }
                         else {
+                            // forward the request to the next power driver
                             status = forward_to_next_power_driver(
                                 dev_ext->attachedDeviceObject,
                                 Irp
@@ -599,20 +575,31 @@ NTSTATUS mj_power(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
 
                 case DevicePowerState:
                     {
-                        // update the power state
-                        const bool u = update_power_state(DeviceObject, stack->Parameters.Power.State.DeviceState);
+                        // get the new state
+                        const auto& new_state = stack->Parameters.Power.State.DeviceState;
+
+                        // check if we are switching to PowerDeviceD0
+                        const bool to_deviceD0 = (new_state == PowerDeviceD0);
+
+                        // check if we have a valid new state. We dont store PowerDeviceUnspecified or
+                        // above/equal to PowerDeviceMaximum
+                        if (new_state > PowerDeviceUnspecified && new_state < PowerDeviceMaximum) {
+                            // update the current power state
+                            dev_ext->current_power_state.DeviceState = new_state;
+                        }
 
                         // forward the request to the next power driver. Add
                         // the completion routine if needed based on the update 
-                        // result
+                        // result. If we are going to D0 the completion routine 
+                        // will set it to this state and release the spinlock
                         status = forward_to_next_power_driver(
                             dev_ext->attachedDeviceObject, Irp, 
-                            (u ? power_state_systemworking_complete : nullptr), 
+                            (to_deviceD0 ? power_state_systemworking_complete : nullptr), 
                             nullptr
                         );
 
                         // check if we need to return early
-                        if (u) {
+                        if (to_deviceD0) {
                             // if we our callback is called we do not need to release the 
                             // spinlock here as it will be released in the callback
                             return status;
