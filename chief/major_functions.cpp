@@ -577,9 +577,9 @@ NTSTATUS mj_power(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
                     {
                         // get the requested system power state
                         const SYSTEM_POWER_STATE system_state = stack->Parameters.Power.State.SystemState;
-                        POWER_STATE device_state;
-
+                        
                         // use the device mapping to get the device power state
+                        POWER_STATE device_state;
                         device_state.DeviceState = system_state_to_device_power_state(DeviceObject, system_state);
                         
                         // check if we need to change the power state
