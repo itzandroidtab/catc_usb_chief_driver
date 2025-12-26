@@ -1,7 +1,7 @@
 #include "spinlock.hpp"
 #include "device_extension.hpp"
 
-void spinlock_increment(PDEVICE_OBJECT DeviceObject) {
+void increment_active_pipe_count(PDEVICE_OBJECT DeviceObject) {
     // get the device extension
     chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
     
@@ -16,7 +16,7 @@ void spinlock_increment(PDEVICE_OBJECT DeviceObject) {
     KeReleaseSpinLock(&dev_ext->device_lock, irql);
 }
 
-LONG spinlock_decrement_notify(PDEVICE_OBJECT DeviceObject) {
+LONG decrement_active_pipe_count_and_notify(PDEVICE_OBJECT DeviceObject) {
     // get the device extension
     chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
 
@@ -44,7 +44,7 @@ LONG spinlock_decrement_notify(PDEVICE_OBJECT DeviceObject) {
     return new_count;
 }
 
-LONG spinlock_decrement(PDEVICE_OBJECT DeviceObject) {
+LONG decrement_active_pipe_count(PDEVICE_OBJECT DeviceObject) {
     // get the device extension
     chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
 

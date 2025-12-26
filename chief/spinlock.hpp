@@ -9,14 +9,14 @@ extern "C" {
  * 
  * @param DeviceObject 
  */
-void spinlock_increment(PDEVICE_OBJECT DeviceObject);
+void increment_active_pipe_count(PDEVICE_OBJECT DeviceObject);
 
 /**
  * @brief Decrement the pipe_count with spinlock protection and notify events
  * 
  * @param DeviceObject 
  */
-LONG spinlock_decrement_notify(PDEVICE_OBJECT DeviceObject);
+LONG decrement_active_pipe_count_and_notify(PDEVICE_OBJECT DeviceObject);
 
 /**
  * @brief Decrement the pipe_count with spinlock protection
@@ -24,4 +24,4 @@ LONG spinlock_decrement_notify(PDEVICE_OBJECT DeviceObject);
  * @param DeviceObject 
  * @return LONG 
  */
-LONG spinlock_decrement(PDEVICE_OBJECT DeviceObject);
+LONG decrement_active_pipe_count(PDEVICE_OBJECT DeviceObject);

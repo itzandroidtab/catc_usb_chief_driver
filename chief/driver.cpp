@@ -179,8 +179,9 @@ static NTSTATUS add_device(__in struct _DRIVER_OBJECT *DriverObject, __in struct
     // start the device
     io_call_start_device(dev_ext->attachedDeviceObject, &dev_ext->device_capabilities);
 
-    // acquire the spinlock
-    spinlock_increment(device_object);
+    // increment the pipe count for the first time so we 
+    // never reach zero except when the device is removed
+    increment_active_pipe_count(device_object);
 
     // clear the flag we are inititializing
     device_object->Flags &= ~DO_DEVICE_INITIALIZING;
