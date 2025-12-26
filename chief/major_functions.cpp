@@ -36,7 +36,6 @@ static NTSTATUS query_complete(PDEVICE_OBJECT DeviceObject, PIRP Irp, PVOID Cont
         *value = NT_SUCCESS(Irp->IoStatus.Status);
     }
 
-
     // release the spinlock
     spinlock_decrement_notify(DeviceObject);
 
