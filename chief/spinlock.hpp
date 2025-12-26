@@ -25,11 +25,3 @@ LONG spinlock_decrement_notify(PDEVICE_OBJECT DeviceObject);
  * @return LONG 
  */
 LONG spinlock_decrement(PDEVICE_OBJECT DeviceObject);
-
-/**
- * @brief Get the current pipe_count with spinlock protection
- * 
- * @param DeviceObject 
- * @return LONG 
- */
-LONG spinlock_get_count(PDEVICE_OBJECT DeviceObject);
