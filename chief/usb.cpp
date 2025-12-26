@@ -180,7 +180,11 @@ NTSTATUS usb_send_receive_vendor_request(_DEVICE_OBJECT* DeviceObject, usb_chief
             return STATUS_INSUFFICIENT_RESOURCES;
         }
 
-        memcpy(buffer, Request->data, Request->length);
+        // check if we need to copy data to the buffer. If we are 
+        // receiving data, we dont need to copy
+        if (!receive) {
+            memcpy(buffer, Request->data, Request->length);
+        }
     }
 
     // initialize the urb
