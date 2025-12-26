@@ -33,7 +33,11 @@ struct chief_device_extension {
   bool *allocated_pipes;
   volatile bool is_ejecting;
   volatile bool is_removing;
-  volatile bool is_stopped;
+
+  // flag if new requests should be held. This is used during
+  // stop device to prevent new ioctls/reads/writes from
+  // being processed until the device is started again
+  volatile bool hold_new_requests;
 
   // The BCD version of the connected USB device
   maybe<unsigned short> bcdUSB;

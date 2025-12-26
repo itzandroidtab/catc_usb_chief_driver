@@ -15,7 +15,7 @@ static bool delete_is_not_pending(__in struct _DEVICE_OBJECT *DeviceObject) {
     chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
     
     // return if the device is not being removed or ejected and has a configuration descriptor
-    return !dev_ext->is_ejecting && (dev_ext->usb_config_desc != nullptr) && !dev_ext->is_removing && !dev_ext->is_stopped;
+    return !dev_ext->is_ejecting && (dev_ext->usb_config_desc != nullptr) && !dev_ext->is_removing && !dev_ext->hold_new_requests;
 }
 
 static NTSTATUS query_complete(PDEVICE_OBJECT DeviceObject, PIRP Irp, PVOID Context) {
@@ -635,17 +635,24 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
             }
 
         case IRP_MN_REMOVE_DEVICE:
-            // stop everything that is running
+            // decrement the pipe_count we incremented at the
+            // start of the mj_pnp function
             spinlock_decrement_notify(DeviceObject);
+            
+            // stop everything that is running
             dev_ext->is_ejecting = true;
             usb_pipe_abort(DeviceObject);
 
             // copy the current irp stack location to the next
             status = forward_to_next_driver(dev_ext->attachedDeviceObject, Irp);
 
-            // release the spinlock again
+            // Decrement the pipe_count again. This is to match the increment
+            // we did when opening the device in add_device. This way we ensure
+            // that the pipe count will reach zero when all pipes are closed
             spinlock_decrement_notify(DeviceObject);
 
+            // wait for all pipes to be closed. The pipe count
+            // reaching zero will signal the event
             KeWaitForSingleObject(
                 &dev_ext->pipe_count_empty, Suspended, KernelMode, false, nullptr
             );
@@ -670,8 +677,8 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
             // select the config descriptor
             status = usb_clear_config_desc(DeviceObject);
 
-            // clear the is_stopped flag
-            dev_ext->is_stopped = false;
+            // clear the hold_new_requests flag
+            dev_ext->hold_new_requests = false;
             
             if (NT_SUCCESS(status)) {
                 // Forward the IRP to the next driver
@@ -689,13 +696,13 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
         case IRP_MN_QUERY_REMOVE_DEVICE:
             // forward the irp to the next driver. In the 
             // callback complete routine we will set the 
-            // is_stopped/Is_removing flag based on the 
-            // result and release the spinlock
+            // hold_new_requests/is_removing flag based on 
+            // the result and release the spinlock
             status = forward_to_next_driver(
                 dev_ext->attachedDeviceObject, Irp,
                 false, query_complete, (
                     (stack->MinorFunction == IRP_MN_QUERY_STOP_DEVICE) ? 
-                    reinterpret_cast<void*>(const_cast<bool*>(&dev_ext->is_stopped)) : 
+                    reinterpret_cast<void*>(const_cast<bool*>(&dev_ext->hold_new_requests)) : 
                     reinterpret_cast<void*>(const_cast<bool*>(&dev_ext->is_removing))
                 )
             );
@@ -712,7 +719,7 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
             }
             else {
                 if (stack->MinorFunction == IRP_MN_CANCEL_STOP_DEVICE) {
-                    dev_ext->is_stopped = false;
+                    dev_ext->hold_new_requests = false;
                 }
                 else if (stack->MinorFunction == IRP_MN_CANCEL_REMOVE_DEVICE) {
                     dev_ext->is_removing = false;
