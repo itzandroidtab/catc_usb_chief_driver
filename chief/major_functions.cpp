@@ -728,7 +728,7 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
             spinlock_decrement_notify(DeviceObject);
             break;
 
-        case IRP_MN_EJECT:
+        case IRP_MN_SURPRISE_REMOVAL:
             // release the spinlock
             spinlock_decrement_notify(DeviceObject);
 
