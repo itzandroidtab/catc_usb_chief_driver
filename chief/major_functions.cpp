@@ -1,7 +1,7 @@
 #include <limits.h>
 
 #include "major_functions.hpp"
-#include "spinlock.hpp"
+#include "pipe.hpp"
 #include "device_extension.hpp"
 #include "usb.hpp"
 

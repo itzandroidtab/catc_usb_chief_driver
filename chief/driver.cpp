@@ -3,7 +3,7 @@
 #include "driver.hpp"
 #include "major_functions.hpp"
 #include "device_extension.hpp"
-#include "spinlock.hpp"
+#include "pipe.hpp"
 
 /**
  * @brief Unload routine for the driver.

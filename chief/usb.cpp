@@ -1,5 +1,5 @@
 #include "usb.hpp"
-#include "spinlock.hpp"
+#include "pipe.hpp"
 
 extern "C" {
     #include <usbdlib.h>

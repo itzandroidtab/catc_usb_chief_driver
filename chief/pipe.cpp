@@ -1,4 +1,4 @@
-#include "spinlock.hpp"
+#include "pipe.hpp"
 #include "device_extension.hpp"
 
 void increment_active_pipe_count(PDEVICE_OBJECT DeviceObject) {
