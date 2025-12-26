@@ -18,6 +18,32 @@ static bool delete_is_not_pending(__in struct _DEVICE_OBJECT *DeviceObject) {
     return !dev_ext->is_ejecting && (dev_ext->usb_config_desc != nullptr) && !dev_ext->is_removing && !dev_ext->is_stopped;
 }
 
+static NTSTATUS query_complete(PDEVICE_OBJECT DeviceObject, PIRP Irp, PVOID Context) {
+    // get the device extension
+    chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
+
+    // check if we have a pending return
+    if (Irp->PendingReturned) {
+        IoGetCurrentIrpStackLocation(Irp)->Control |= SL_PENDING_RETURNED;
+    }
+
+    // check if we have a config descriptor
+    if (dev_ext->usb_config_desc) {
+        // mark we are stopped so we dont accept new
+        // ioctls/reads/writes if we gotten permission
+        // from the lower driver
+        volatile bool* value = reinterpret_cast<bool*>(Context);
+        *value = NT_SUCCESS(Irp->IoStatus.Status);
+    }
+
+
+    // release the spinlock
+    spinlock_decrement_notify(DeviceObject);
+
+    // return success
+    return STATUS_SUCCESS;
+}
+
 static NTSTATUS forward_to_next_power_driver(
     PDEVICE_OBJECT attachedDeviceObject, PIRP Irp, 
     PIO_COMPLETION_ROUTINE CompletionRoutine = nullptr, 
@@ -524,7 +550,7 @@ NTSTATUS mj_system_control(__in struct _DEVICE_OBJECT *DeviceObject, __inout str
 
     // call the next driver
     const NTSTATUS status = IoCallDriver(
-    reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension)->attachedDeviceObject,
+        reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension)->attachedDeviceObject,
         Irp
     );
 
@@ -663,49 +689,20 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
             spinlock_decrement_notify(DeviceObject);
             break;
 
-        case IRP_MN_QUERY_REMOVE_DEVICE:
-            // check if we have a config descriptor
-            if (!dev_ext->usb_config_desc) {
-                // skip the irp and call the next driver
-                status = forward_to_next_driver(
-                    dev_ext->attachedDeviceObject, Irp, true
-                );
-            }
-            else {
-                dev_ext->is_removing = true;
-
-                // wait for event2
-                KeWaitForSingleObject(
-                    &dev_ext->event2, Suspended, KernelMode, false, nullptr
-                );
-
-                Irp->IoStatus.Status = STATUS_SUCCESS;
-
-                // call the next driver
-                status = forward_to_next_driver(dev_ext->attachedDeviceObject, Irp);
-            }
-
-            // release the spinlock
-            spinlock_decrement_notify(DeviceObject);
-            break;
-
         case IRP_MN_QUERY_STOP_DEVICE:
-            // check if we have a config descriptor
-            if (!dev_ext->usb_config_desc) {
-                // skip the irp
-                status = forward_to_next_driver(
-                    dev_ext->attachedDeviceObject, Irp, true
-                );
-            }
-            else {
-                dev_ext->is_stopped = true;
-                Irp->IoStatus.Status = status = STATUS_SUCCESS;
-
-                IofCompleteRequest(Irp, IO_NO_INCREMENT);
-            }
-
-            // release the spinlock
-            spinlock_decrement_notify(DeviceObject);
+        case IRP_MN_QUERY_REMOVE_DEVICE:
+            // forward the irp to the next driver. In the 
+            // callback complete routine we will set the 
+            // is_stopped/Is_removing flag based on the 
+            // result and release the spinlock
+            status = forward_to_next_driver(
+                dev_ext->attachedDeviceObject, Irp,
+                false, query_complete, (
+                    (stack->MinorFunction == IRP_MN_QUERY_STOP_DEVICE) ? 
+                    reinterpret_cast<void*>(const_cast<bool*>(&dev_ext->is_stopped)) : 
+                    reinterpret_cast<void*>(const_cast<bool*>(&dev_ext->is_removing))
+                )
+            );
             break;
 
         case IRP_MN_CANCEL_STOP_DEVICE:

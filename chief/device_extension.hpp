@@ -29,7 +29,6 @@ struct chief_device_extension {
   DEVICE_CAPABILITIES device_capabilities;
   KEVENT pipe_count_empty;
   KEVENT event1;
-  KEVENT event2;
   KSPIN_LOCK device_lock;
   LONG pipe_open_count;
   bool *allocated_pipes;
