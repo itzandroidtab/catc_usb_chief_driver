@@ -3,7 +3,7 @@
 #include "driver.hpp"
 #include "major_functions.hpp"
 #include "device_extension.hpp"
-#include "spinlock.hpp"
+#include "pipe.hpp"
 
 /**
  * @brief Unload routine for the driver.
@@ -66,9 +66,6 @@ NTSTATUS add_chief_device(PDRIVER_OBJECT driver_object, PDEVICE_OBJECT& device_o
 
     // initalize the events
     KeInitializeEvent(&dev_ext->pipe_count_empty, NotificationEvent, FALSE);
-    KeInitializeEvent(&dev_ext->event1, NotificationEvent, FALSE);
-    KeInitializeEvent(&dev_ext->event2, NotificationEvent, FALSE);
-    KeInitializeEvent(&dev_ext->power_complete_event, NotificationEvent, FALSE);
 
     // initialize spinlocks
     KeInitializeSpinLock(&dev_ext->device_lock);
@@ -177,15 +174,14 @@ static NTSTATUS add_device(__in struct _DRIVER_OBJECT *DriverObject, __in struct
     dev_ext->device_capabilities.Version = 1;
     dev_ext->device_capabilities.Address = static_cast<ULONG>(-1);
     dev_ext->device_capabilities.UINumber = static_cast<ULONG>(-1);
+    dev_ext->device_capabilities.DeviceWake = PowerDeviceUnspecified;
 
     // start the device
     io_call_start_device(dev_ext->attachedDeviceObject, &dev_ext->device_capabilities);
 
-    // set the current power state to unspecified
-    dev_ext->target_power_state.DeviceState = PowerDeviceUnspecified;
-
-    // acquire the spinlock
-    spinlock_increment(device_object);
+    // increment the pipe count for the first time so we 
+    // never reach zero except when the device is removed
+    increment_active_pipe_count(device_object);
 
     // clear the flag we are inititializing
     device_object->Flags &= ~DO_DEVICE_INITIALIZING;

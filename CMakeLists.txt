@@ -18,7 +18,7 @@ string(REPLACE "/RTC1" "" CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG}")
 set(SOURCES
     chief/driver.cpp
     chief/major_functions.cpp
-    chief/spinlock.cpp
+    chief/pipe.cpp
     chief/usb.cpp
 )
 

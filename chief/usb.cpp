@@ -1,5 +1,5 @@
 #include "usb.hpp"
-#include "spinlock.hpp"
+#include "pipe.hpp"
 
 extern "C" {
     #include <usbdlib.h>
@@ -65,7 +65,7 @@ static NTSTATUS usb_bulk_or_interrupt_transfer_complete(PDEVICE_OBJECT DeviceObj
     }
     
     // decrement the pipe open count
-    spinlock_decrement_notify(DeviceObject);
+    decrement_active_pipe_count_and_notify(DeviceObject);
 
     // get the context urb
     _URB_BULK_OR_INTERRUPT_TRANSFER* urb = reinterpret_cast<_URB_BULK_OR_INTERRUPT_TRANSFER*>(Context);
@@ -161,7 +161,7 @@ NTSTATUS usb_send_bulk_or_interrupt_transfer(__in struct _DEVICE_OBJECT *DeviceO
     stack->Control = SL_INVOKE_ON_SUCCESS | SL_INVOKE_ON_ERROR | SL_INVOKE_ON_CANCEL;
 
     // acquire the spinlock
-    spinlock_increment(DeviceObject);
+    increment_active_pipe_count(DeviceObject);
 
     // get the device extension
     chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
@@ -194,7 +194,7 @@ NTSTATUS usb_send_receive_vendor_request(_DEVICE_OBJECT* DeviceObject, usb_chief
         ((receive ? BMREQUEST_DEVICE_TO_HOST : BMREQUEST_HOST_TO_DEVICE) << 7) |
         (BMREQUEST_VENDOR << 5) | BMREQUEST_TO_DEVICE
     );
-    usb.Request = Request->Request & 0xff;
+    usb.Request = Request->request & 0xff;
     usb.Value = Request->value;
     usb.Index = Request->index;
     usb.TransferFlags = (
@@ -484,7 +484,7 @@ NTSTATUS usb_pipe_abort(_DEVICE_OBJECT* DeviceObject) {
         dev_ext->allocated_pipes[i] = false;
 
         // decrement the pipe count
-        spinlock_decrement(DeviceObject);
+        decrement_active_pipe_count(DeviceObject);
     }
 
     return status;

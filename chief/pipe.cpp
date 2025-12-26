@@ -1,7 +1,7 @@
-#include "spinlock.hpp"
+#include "pipe.hpp"
 #include "device_extension.hpp"
 
-void spinlock_increment(PDEVICE_OBJECT DeviceObject) {
+void increment_active_pipe_count(PDEVICE_OBJECT DeviceObject) {
     // get the device extension
     chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
     
@@ -10,13 +10,13 @@ void spinlock_increment(PDEVICE_OBJECT DeviceObject) {
     KeAcquireSpinLock(&dev_ext->device_lock, &irql);
 
     // increment the lock count
-    InterlockedIncrement(&dev_ext->pipe_open_count);
+    InterlockedIncrement(&dev_ext->active_pipe_count);
 
     // release the spinlock
     KeReleaseSpinLock(&dev_ext->device_lock, irql);
 }
 
-LONG spinlock_decrement_notify(PDEVICE_OBJECT DeviceObject) {
+LONG decrement_active_pipe_count_and_notify(PDEVICE_OBJECT DeviceObject) {
     // get the device extension
     chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
 
@@ -25,15 +25,12 @@ LONG spinlock_decrement_notify(PDEVICE_OBJECT DeviceObject) {
     KeAcquireSpinLock(&dev_ext->device_lock, &irql);
     
     // decrement the lock count
-    LONG new_count = InterlockedDecrement(&dev_ext->pipe_open_count);
+    LONG new_count = InterlockedDecrement(&dev_ext->active_pipe_count);
 
     // check if we need to set and event
     switch (new_count) {
         case 0:
             KeSetEvent(&dev_ext->pipe_count_empty, EVENT_INCREMENT, false);
-            break;
-        case 1:
-            KeSetEvent(&dev_ext->event1, EVENT_INCREMENT, false);
             break;
         default:
             // do nothing on the default case
@@ -47,7 +44,7 @@ LONG spinlock_decrement_notify(PDEVICE_OBJECT DeviceObject) {
     return new_count;
 }
 
-LONG spinlock_decrement(PDEVICE_OBJECT DeviceObject) {
+LONG decrement_active_pipe_count(PDEVICE_OBJECT DeviceObject) {
     // get the device extension
     chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
 
@@ -56,29 +53,11 @@ LONG spinlock_decrement(PDEVICE_OBJECT DeviceObject) {
     KeAcquireSpinLock(&dev_ext->device_lock, &irql);
     
     // decrement the lock count
-    LONG new_count = InterlockedDecrement(&dev_ext->pipe_open_count);
+    LONG new_count = InterlockedDecrement(&dev_ext->active_pipe_count);
 
     // release the spinlock
     KeReleaseSpinLock(&dev_ext->device_lock, irql);
 
     // return the new count
     return new_count;
-}
-
-LONG spinlock_get_count(PDEVICE_OBJECT DeviceObject) {
-    // get the device extension
-    chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
-
-    // acquire the spinlock
-    KIRQL irql;
-    KeAcquireSpinLock(&dev_ext->device_lock, &irql);
-    
-    // get the lock count
-    LONG count = dev_ext->pipe_open_count;
-
-    // release the spinlock
-    KeReleaseSpinLock(&dev_ext->device_lock, irql);
-
-    // return the count
-    return count;
 }

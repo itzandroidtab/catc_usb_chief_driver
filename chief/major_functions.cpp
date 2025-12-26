@@ -1,7 +1,7 @@
 #include <limits.h>
 
 #include "major_functions.hpp"
-#include "spinlock.hpp"
+#include "pipe.hpp"
 #include "device_extension.hpp"
 #include "usb.hpp"
 
@@ -15,7 +15,83 @@ static bool delete_is_not_pending(__in struct _DEVICE_OBJECT *DeviceObject) {
     chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
     
     // return if the device is not being removed or ejected and has a configuration descriptor
-    return !dev_ext->is_ejecting && (dev_ext->usb_config_desc != nullptr) && !dev_ext->is_removing && !dev_ext->is_stopped;
+    return !dev_ext->device_removed && (dev_ext->usb_config_desc != nullptr) && !dev_ext->remove_pending && !dev_ext->hold_new_requests;
+}
+
+static NTSTATUS query_complete(PDEVICE_OBJECT DeviceObject, PIRP Irp, PVOID Context) {
+    // get the device extension
+    chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
+
+    // check if we have a pending return
+    if (Irp->PendingReturned) {
+        IoGetCurrentIrpStackLocation(Irp)->Control |= SL_PENDING_RETURNED;
+    }
+
+    // check if we have a config descriptor
+    if (dev_ext->usb_config_desc) {
+        // mark we are stopped so we dont accept new
+        // ioctls/reads/writes if we gotten permission
+        // from the lower driver
+        volatile bool* value = reinterpret_cast<bool*>(Context);
+        *value = NT_SUCCESS(Irp->IoStatus.Status);
+    }
+
+    // release the spinlock
+    decrement_active_pipe_count_and_notify(DeviceObject);
+
+    // return success
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS forward_to_next_power_driver(
+    PDEVICE_OBJECT attachedDeviceObject, PIRP Irp, 
+    PIO_COMPLETION_ROUTINE CompletionRoutine = nullptr, 
+    void* Context = nullptr)
+{
+    // copy the current irp stack location to the next
+    IoCopyCurrentIrpStackLocationToNext(Irp);
+
+    // check if we have a completion routine
+    if (CompletionRoutine) {
+        // set the completion routine
+        IoSetCompletionRoutine(
+            Irp, CompletionRoutine,
+            Context, true, true, true
+        );
+    }
+
+    // mark we are ready for the next power irp
+    PoStartNextPowerIrp(Irp);
+
+    // call the driver
+    return PoCallDriver(attachedDeviceObject, Irp);
+}
+
+static NTSTATUS forward_to_next_driver(
+    PDEVICE_OBJECT attachedDeviceObject, PIRP Irp, 
+    const bool skip = false,
+    PIO_COMPLETION_ROUTINE CompletionRoutine = nullptr, 
+    void* Context = nullptr) 
+{
+    // check if we need to copy the current irp stack location
+    if (!skip) {
+        IoCopyCurrentIrpStackLocationToNext(Irp);
+    } 
+    else {
+        IoSkipCurrentIrpStackLocation(Irp);
+    }
+
+    // check if we have a completion routine
+    if (CompletionRoutine) {
+        // set the completion routine
+        IoSetCompletionRoutine(
+            Irp, CompletionRoutine,
+            Context, true, true, true
+        );
+    }
+
+    // call the driver
+    return IofCallDriver(attachedDeviceObject, Irp);
 }
 
 /**
@@ -52,126 +128,21 @@ static ULONG get_pipe_from_unicode_str(_UNICODE_STRING* FileName) {
     return found_digit ? result : ULONG_MAX;
 }
 
-static void set_power_complete(PDEVICE_OBJECT DeviceObject, UCHAR MinorFunction, POWER_STATE PowerState, PVOID Context, PIO_STATUS_BLOCK IoStatus) {
-    // get the device extension
-    chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
-
-    if (PowerState.DeviceState < dev_ext->target_power_state.DeviceState) {
-        // set the event to signal the power request is complete
-        KeSetEvent(&dev_ext->power_complete_event, EVENT_INCREMENT, false);
-    }
-
-    // release the spinlock
-    spinlock_decrement_notify(DeviceObject);
-}
-
-static NTSTATUS change_power_state_impl(_DEVICE_OBJECT* DeviceObject, const POWER_STATE state) {
-    // get the device extension
-    chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
-
-    // check if we are already in the requested state
-    if (dev_ext->current_power_state.DeviceState == state.DeviceState) {
-        return STATUS_SUCCESS;
-    }
-
-    // acquire the spinlock
-    spinlock_increment(DeviceObject);
-
-    // mark the power request as busy
-    dev_ext->power_request_busy = true;
-
-    // send a IRP_MN_SET_POWER request to the driver
-    NTSTATUS status = PoRequestPowerIrp(
-        dev_ext->physicalDeviceObject,
-        IRP_MN_SET_POWER,
-        state,
-        set_power_complete,
-        nullptr,
-        nullptr
-    );
-
-    // check if we have a pending status
-    if (status == STATUS_PENDING) {
-        // check if we need to wait for the request to complete
-        if (state.DeviceState < dev_ext->target_power_state.DeviceState) {
-            KeWaitForSingleObject(
-                &dev_ext->power_complete_event,
-                Suspended,
-                KernelMode,
-                false,
-                nullptr
-            );
-        }
-
-        // TODO: why is this not using the status from the completion routine?
-        status = STATUS_SUCCESS;
-    }
-
-    // clear the power request busy flag
-    dev_ext->power_request_busy = false;
-
-    return status;
-}
-
-static NTSTATUS change_power_state(_DEVICE_OBJECT* DeviceObject) {
-    // check if we have a delete pending
-    if (!delete_is_not_pending(DeviceObject)) {
-        return STATUS_DELETE_PENDING;
-    }
-
-    // get the device extension
-    chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
-
-    // check if we have a power irq pending or we have a power request busy
-    if (dev_ext->power_irp || dev_ext->power_request_busy) {
-        return STATUS_SUCCESS;
-    }
-
-    const LONG pipe_count = spinlock_get_count(DeviceObject);
-    
-    // TODO: figure out what the remainder of this function does. It doesnt
-    // make too much sense
-    if (!pipe_count) {
-        return STATUS_SUCCESS;
-    }
-
-    // get the power state
-    POWER_STATE state = dev_ext->target_power_state;
-
-    // check if we are currently in a working, unspecified or 
-    // hibernate state (we only pass here if we are in a 
-    // sleeping1/2/3 or shutdown state)
-    if (state.DeviceState == PowerDeviceD0 || 
-        state.DeviceState == PowerDeviceUnspecified ||
-        state.DeviceState >= PowerDeviceMaximum) 
-    {
-        return STATUS_SUCCESS;
-    } 
-
-    // change the power state to D0
-    state.DeviceState = PowerDeviceD0;
-
-    return change_power_state_impl(DeviceObject, state);
-}
-
 static void power_request_complete(PDEVICE_OBJECT DeviceObject, UCHAR MinorFunction, POWER_STATE PowerState, PVOID Context, PIO_STATUS_BLOCK IoStatus) {
     // get the device extension
     chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
 
-    // copy the current irp stack location to the next
-    IoCopyCurrentIrpStackLocationToNext(dev_ext->power_irp);
+    // get the irp from the context
+    PIRP Irp = reinterpret_cast<PIRP>(Context);
+    
+    // forward the request to the next power driver
+    (void)forward_to_next_power_driver(dev_ext->attachedDeviceObject, Irp);
 
-    // Mark we are done with the power request
-    PoStartNextPowerIrp(dev_ext->power_irp);
-
-    // call the driver
-    PoCallDriver(dev_ext->attachedDeviceObject, dev_ext->power_irp);
-
-    // clear the power irp pointer
-    dev_ext->power_irp = nullptr;
+    // decrement the power irp count
+    InterlockedDecrement(&dev_ext->power_irp_count);
 
     // release the spinlock
-    spinlock_decrement_notify(DeviceObject);
+    decrement_active_pipe_count_and_notify(DeviceObject);
 }
 
 static NTSTATUS power_state_systemworking_complete(PDEVICE_OBJECT DeviceObject, PIRP Irp, PVOID Context) {
@@ -188,35 +159,24 @@ static NTSTATUS power_state_systemworking_complete(PDEVICE_OBJECT DeviceObject, 
     Irp->IoStatus.Status = STATUS_SUCCESS;
 
     // release the spinlock
-    spinlock_decrement_notify(DeviceObject);
+    decrement_active_pipe_count_and_notify(DeviceObject);
 
     // return success
     return STATUS_SUCCESS;
 }
 
-static bool update_power_state(_DEVICE_OBJECT* DeviceObject, const DEVICE_POWER_STATE state) {
-    // check if we are changing to a non D0 state
-    if (state == PowerDeviceD0) {
-        return true;
-    }
-    
-    // TODO: this doesnt do anything. It copies the state to the 
-    // current_power_state but it does extra checking that seems 
-    // useless
-    if (state > PowerDeviceD0) {
-        // get the device extension
-        chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
-
-        if (state <= PowerDeviceD2) {
-            dev_ext->current_power_state.DeviceState = state;
-        }
-        else if (state == PowerDeviceD3) {
-            // set the current power state to D3
-            dev_ext->current_power_state.DeviceState = PowerDeviceD3;
-        }
+static DEVICE_POWER_STATE system_state_to_device_power_state(_DEVICE_OBJECT* DeviceObject, SYSTEM_POWER_STATE state) {
+    // check if we have a valid state
+    if (state >= POWER_SYSTEM_MAXIMUM) {
+        // if we dont have a valid state, return the deepest power state
+        return PowerDeviceD3;
     }
 
-    return false;
+    // get the device extension
+    chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
+
+    // return the device power state for the given system power state
+    return dev_ext->device_capabilities.DeviceState[state];
 }
 
 static NTSTATUS usb_cleanup_memory(_DEVICE_OBJECT* DeviceObject) {
@@ -284,7 +244,7 @@ NTSTATUS mj_create(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP
     chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
 
     // aquire the spinlock
-    spinlock_increment(DeviceObject);
+    increment_active_pipe_count(DeviceObject);
 
     NTSTATUS status = STATUS_SUCCESS;
 
@@ -314,10 +274,7 @@ NTSTATUS mj_create(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP
                 dev_ext->allocated_pipes[pipe_index] = true;
 
                 // increment the interlocked value
-                spinlock_increment(DeviceObject);
-
-                // change the power state
-                change_power_state(DeviceObject);
+                increment_active_pipe_count(DeviceObject);
             }
         }
     }
@@ -328,14 +285,14 @@ NTSTATUS mj_create(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP
     IofCompleteRequest(Irp, IO_NO_INCREMENT);
 
     // release the spinlock
-    spinlock_decrement_notify(DeviceObject);
+    decrement_active_pipe_count_and_notify(DeviceObject);
 
     return status;
 }
 
 NTSTATUS mj_close(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *Irp) {
     // acquire the spinlock
-    spinlock_increment(DeviceObject);
+    increment_active_pipe_count(DeviceObject);
 
     // get the device extension
     chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
@@ -356,13 +313,13 @@ NTSTATUS mj_close(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
                 dev_ext->allocated_pipes[pipe_index] = false;
 
                 // decrement the pipe count
-                spinlock_decrement(DeviceObject);
+                decrement_active_pipe_count(DeviceObject);
             }
         }
     }
 
     // release the spinlock
-    spinlock_decrement_notify(DeviceObject);
+    decrement_active_pipe_count_and_notify(DeviceObject);
 
     Irp->IoStatus.Status = STATUS_SUCCESS;
     Irp->IoStatus.Information = 0;
@@ -383,7 +340,7 @@ NTSTATUS mj_write(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
 
 NTSTATUS mj_device_control(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *Irp) {
     // acquire the spinlock
-    spinlock_increment(DeviceObject);
+    increment_active_pipe_count(DeviceObject);
 
     // get the device extension
     chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
@@ -425,12 +382,12 @@ NTSTATUS mj_device_control(__in struct _DEVICE_OBJECT *DeviceObject, __inout str
                 }
                 break;
             case CTL_CODE(FILE_DEVICE_USB, 2, METHOD_BUFFERED, FILE_ANY_ACCESS): // 0x220008
-                status = usb_set_alternate_setting(DeviceObject, dev_ext->usb_config_desc, vendor_request->Request & 0xff);
+                status = usb_set_alternate_setting(DeviceObject, dev_ext->usb_config_desc, vendor_request->request & 0xff);
                 break;
             case CTL_CODE(FILE_DEVICE_USB, 3, METHOD_BUFFERED, FILE_ANY_ACCESS): // 0x22000c
                 if (dev_ext->bcdUSB.has_value()) {
                     // copy the bcdUSB value to the vendor request
-                    vendor_request->Request = dev_ext->bcdUSB.has_value();
+                    vendor_request->request = dev_ext->bcdUSB.has_value();
 
                     // set the length to 2 bytes
                     Irp->IoStatus.Information = 2;
@@ -457,7 +414,7 @@ NTSTATUS mj_device_control(__in struct _DEVICE_OBJECT *DeviceObject, __inout str
     IofCompleteRequest(Irp, IO_NO_INCREMENT);
 
     // release the spinlock
-    spinlock_decrement_notify(DeviceObject);
+    decrement_active_pipe_count_and_notify(DeviceObject);
 
     return status;
 }
@@ -470,71 +427,18 @@ NTSTATUS mj_power(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
     PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(Irp);
 
     // acquire the spinlock
-    spinlock_increment(DeviceObject);
+    increment_active_pipe_count(DeviceObject);
 
     NTSTATUS status = STATUS_SUCCESS;
 
     switch (stack->MinorFunction) {
         case IRP_MN_WAIT_WAKE:
-        {
-                // TODO: check this out
-                // get the current power state
-                const POWER_STATE state = dev_ext->current_power_state;
+            // the USB chief doesnt support wake from any sleep state. Dont bother
+            // checking the power state and just fail the request
+            status = Irp->IoStatus.Status = STATUS_NOT_SUPPORTED;
 
-                // check if the device is already awake
-                const DEVICE_POWER_STATE device_wake = dev_ext->device_capabilities.DeviceWake;
-
-                // set target_power_state to the device wake state
-                dev_ext->target_power_state.DeviceState = device_wake;
-
-                // check if we are already in the PowerDeviceD0 state
-                if (state.DeviceState != PowerDeviceD0 || dev_ext->target_power_state.DeviceState < state.DeviceState) {
-                    dev_ext->wait_wake_in_progress = true;
-
-                    // copy the current irp stack location to the next
-                    IoCopyCurrentIrpStackLocationToNext(Irp);
-
-                    // create a event
-                    KEVENT event;
-                    KeInitializeEvent(&event, NotificationEvent, false);
-
-                    // get the next irp stack location
-                    IoSetCompletionRoutine(
-                        Irp, signal_event_complete,
-                        &event, true, true, true
-                    );
-
-                    PoStartNextPowerIrp(Irp);
-                    status = PoCallDriver(dev_ext->attachedDeviceObject, Irp);
-
-                    // check if we need to wait on the request
-                    if (status == STATUS_PENDING) {
-                        // wait for the event to be signaled
-                        KeWaitForSingleObject(
-                            &event,
-                            Suspended,
-                            KernelMode,
-                            false,
-                            nullptr
-                        );
-
-                        // TODO: shouldnt we use the IoStatus.Status here?
-                        // status = Irp->IoStatus.Status;
-                    }
-
-                    // change the power state to the new value i guess
-                    change_power_state(DeviceObject);
-                    
-                    dev_ext->wait_wake_in_progress = false;
-                }
-                else {
-                    // set the status to invalid device state
-                    status = Irp->IoStatus.Status = STATUS_INVALID_DEVICE_STATE;
-
-                    // complete the irp
-                    IofCompleteRequest(Irp, IO_NO_INCREMENT);
-                }
-            }   
+            // complete the irp
+            IofCompleteRequest(Irp, IO_NO_INCREMENT);
             break;     
         
         case IRP_MN_SET_POWER:
@@ -544,23 +448,15 @@ NTSTATUS mj_power(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
                     {
                         // get the requested system power state
                         const SYSTEM_POWER_STATE system_state = stack->Parameters.Power.State.SystemState;
-                        POWER_STATE device_state;
-                        device_state.DeviceState = PowerDeviceD0;
                         
-                        // check if the system state is not working. If its not working we need
-                        // to map it to a device power state
-                        if (system_state != PowerSystemWorking) {
-                            if (dev_ext->wait_wake_in_progress) {
-                                device_state.DeviceState = dev_ext->device_capabilities.DeviceState[system_state];
-                            }
-                            else {
-                                device_state.DeviceState = PowerDeviceD3;
-                            }
-                        }
-
+                        // use the device mapping to get the device power state
+                        POWER_STATE device_state;
+                        device_state.DeviceState = system_state_to_device_power_state(DeviceObject, system_state);
+                        
+                        // check if we need to change the power state
                         if (device_state.DeviceState != dev_ext->current_power_state.DeviceState) {
                             // store the current IRP
-                            dev_ext->power_irp = Irp;
+                            InterlockedIncrement(&dev_ext->power_irp_count);
 
                             // do a power request. The callback will release the spinlock
                             return PoRequestPowerIrp(
@@ -568,20 +464,14 @@ NTSTATUS mj_power(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
                                 IRP_MN_SET_POWER,
                                 device_state,
                                 power_request_complete,
-                                nullptr,
+                                Irp,
                                 nullptr
                             );
                         }
                         else {
-                            // copy the current irp stack location to the next
-                            IoCopyCurrentIrpStackLocationToNext(Irp);
-
-                            // mark we are ready for the next power irp
-                            PoStartNextPowerIrp(Irp);
-                            
-                            // call the next driver
-                            status = PoCallDriver(
-                                reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension)->attachedDeviceObject,
+                            // forward the request to the next power driver
+                            status = forward_to_next_power_driver(
+                                dev_ext->attachedDeviceObject,
                                 Irp
                             );
                         }
@@ -590,32 +480,31 @@ NTSTATUS mj_power(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
 
                 case DevicePowerState:
                     {
-                        // update the power state
-                        const bool u = update_power_state(DeviceObject, stack->Parameters.Power.State.DeviceState);
+                        // get the new state
+                        const auto& new_state = stack->Parameters.Power.State.DeviceState;
 
-                        // copy the current irp stack location to the next
-                        IoCopyCurrentIrpStackLocationToNext(Irp);
+                        // check if we are switching to PowerDeviceD0
+                        const bool to_deviceD0 = (new_state == PowerDeviceD0);
 
-                        // check if we need to add a new irp call
-                        if (u) {
-                            // the callback will handle releasing the spinlock
-                            IoSetCompletionRoutine(
-                                Irp, power_state_systemworking_complete, 
-                                nullptr, true, true, true
-                            );
+                        // check if we have a valid new state. We dont store PowerDeviceUnspecified or
+                        // above/equal to PowerDeviceMaximum
+                        if (new_state > PowerDeviceUnspecified && new_state < PowerDeviceMaximum) {
+                            // update the current power state
+                            dev_ext->current_power_state.DeviceState = new_state;
                         }
 
-                        // mark we are ready for the next power irp
-                        PoStartNextPowerIrp(Irp);
-
-                        // call the next driver 
-                        status = PoCallDriver(
-                            reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension)->attachedDeviceObject,
-                            Irp
+                        // forward the request to the next power driver. Add
+                        // the completion routine if needed based on the update 
+                        // result. If we are going to D0 the completion routine 
+                        // will set it to this state and release the spinlock
+                        status = forward_to_next_power_driver(
+                            dev_ext->attachedDeviceObject, Irp, 
+                            (to_deviceD0 ? power_state_systemworking_complete : nullptr), 
+                            nullptr
                         );
 
                         // check if we need to return early
-                        if (u) {
+                        if (to_deviceD0) {
                             // if we our callback is called we do not need to release the 
                             // spinlock here as it will be released in the callback
                             return status;
@@ -632,24 +521,16 @@ NTSTATUS mj_power(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP 
 
         case IRP_MN_POWER_SEQUENCE:
         case IRP_MN_QUERY_POWER:
-            // copy the current irp stack location to the next
-            IoCopyCurrentIrpStackLocationToNext(Irp);
-
-            // mark we are ready for the next power irp
-            PoStartNextPowerIrp(Irp);
-            
-            // call the next driver
-            status = PoCallDriver(
-                reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension)->attachedDeviceObject,
+        default:
+            status = forward_to_next_power_driver(
+                dev_ext->attachedDeviceObject,
                 Irp
             );
-
-        default:
             break;
     }
 
     // release the spinlock
-    spinlock_decrement_notify(DeviceObject);
+    decrement_active_pipe_count_and_notify(DeviceObject);
 
     // return the status
     return status;
@@ -661,19 +542,16 @@ NTSTATUS mj_system_control(__in struct _DEVICE_OBJECT *DeviceObject, __inout str
     Irp->IoStatus.Information = 0;
 
     // aquire the spinlock
-    spinlock_increment(DeviceObject);
+    increment_active_pipe_count(DeviceObject);
 
-    // copy the current irp stack location to the next
-    IoCopyCurrentIrpStackLocationToNext(Irp);
+    // get the device extension
+    chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
 
     // call the next driver
-    const NTSTATUS status = IoCallDriver(
-    reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension)->attachedDeviceObject,
-        Irp
-    );
+    const NTSTATUS status = forward_to_next_driver(dev_ext->attachedDeviceObject, Irp);
 
     // release the spinlock
-    spinlock_decrement_notify(DeviceObject);
+    decrement_active_pipe_count_and_notify(DeviceObject);
 
     return status;
 }
@@ -689,7 +567,7 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
     chief_device_extension* dev_ext = (chief_device_extension*)DeviceObject->DeviceExtension;   
 
     // acquire the spinlock
-    spinlock_increment(DeviceObject);
+    increment_active_pipe_count(DeviceObject);
 
     NTSTATUS status = STATUS_SUCCESS;
 
@@ -701,17 +579,12 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
                 KEVENT event;
                 KeInitializeEvent(&event, NotificationEvent, false);
 
-                // copy the current stack location to the next
-                IoCopyCurrentIrpStackLocationToNext(Irp);
-
-                // get the next stack location
-                IoSetCompletionRoutine(
-                    Irp, signal_event_complete,
-                    &event, true, true, true
-                );
-
                 // call the next driver
-                status = IofCallDriver(dev_ext->attachedDeviceObject, Irp);
+                status = forward_to_next_driver(
+                    dev_ext->attachedDeviceObject, Irp,
+                    false, signal_event_complete,
+                    &event
+                );
 
                 if (status == STATUS_PENDING) {
                     // wait for the event to be signaled
@@ -726,6 +599,7 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
                     status = Irp->IoStatus.Status;
                 }
 
+                // check if the start device was successful on the lower driver
                 if (NT_SUCCESS(status)) {
                     // get the device descriptor
                     USB_DEVICE_DESCRIPTOR device_desc;
@@ -741,7 +615,7 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
                         // try to get the configuration descriptor
                         status = usb_get_configuration_desc(DeviceObject, dev_ext->usb_config_desc);
 
-                        // mark if we have a config descriptor
+                        // check if we can change to the first alternate setting
                         if (NT_SUCCESS(status)) {
                             // set the alternate setting to 0
                             status = usb_set_alternate_setting(DeviceObject, dev_ext->usb_config_desc, 0);
@@ -757,25 +631,29 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
                 }
 
                 IofCompleteRequest(Irp, IO_NO_INCREMENT);
-                spinlock_decrement_notify(DeviceObject);
+                decrement_active_pipe_count_and_notify(DeviceObject);
                 break;
             }
 
         case IRP_MN_REMOVE_DEVICE:
+            // decrement the pipe_count we incremented at the
+            // start of the mj_pnp function
+            decrement_active_pipe_count_and_notify(DeviceObject);
+            
             // stop everything that is running
-            spinlock_decrement_notify(DeviceObject);
-            dev_ext->is_ejecting = true;
+            dev_ext->device_removed = true;
             usb_pipe_abort(DeviceObject);
 
             // copy the current irp stack location to the next
-            IoCopyCurrentIrpStackLocationToNext(Irp);
+            status = forward_to_next_driver(dev_ext->attachedDeviceObject, Irp);
 
-            // call the next driver
-            status = IofCallDriver(dev_ext->attachedDeviceObject, Irp);
+            // Decrement the pipe_count again. This is to match the increment
+            // we did when opening the device in add_device. This way we ensure
+            // that the pipe count will reach zero when all pipes are closed
+            decrement_active_pipe_count_and_notify(DeviceObject);
 
-            // release the spinlock again
-            spinlock_decrement_notify(DeviceObject);
-
+            // wait for all pipes to be closed. The pipe count
+            // reaching zero will signal the event
             KeWaitForSingleObject(
                 &dev_ext->pipe_count_empty, Suspended, KernelMode, false, nullptr
             );
@@ -800,69 +678,35 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
             // select the config descriptor
             status = usb_clear_config_desc(DeviceObject);
 
-            // clear the is_stopped flag
-            dev_ext->is_stopped = false;
+            // clear the hold_new_requests flag
+            dev_ext->hold_new_requests = false;
             
             if (NT_SUCCESS(status)) {
                 // Forward the IRP to the next driver
-                IoCopyCurrentIrpStackLocationToNext(Irp);
-
-                // call the next driver
-                status = IofCallDriver(dev_ext->attachedDeviceObject, Irp);
+                status = forward_to_next_driver(dev_ext->attachedDeviceObject, Irp);
             }
             else {
                 Irp->IoStatus.Status = status;
                 IofCompleteRequest(Irp, IO_NO_INCREMENT);
             }
 
-            spinlock_decrement_notify(DeviceObject);
-            break;
-
-        case IRP_MN_QUERY_REMOVE_DEVICE:
-            // check if we have a config descriptor
-            if (!dev_ext->usb_config_desc) {
-                // skip the irp
-                IoSkipCurrentIrpStackLocation(Irp);
-            }
-            else {
-                dev_ext->is_removing = true;
-
-                // wait for event2
-                KeWaitForSingleObject(
-                    &dev_ext->event2, Suspended, KernelMode, false, nullptr
-                );
-
-                Irp->IoStatus.Status = STATUS_SUCCESS;
-
-                // copy the current irp stack location to the next
-                IoCopyCurrentIrpStackLocationToNext(Irp);
-            }
-
-            // call the next driver
-            status = IofCallDriver(dev_ext->attachedDeviceObject, Irp);
-
-            // release the spinlock
-            spinlock_decrement_notify(DeviceObject);
+            decrement_active_pipe_count_and_notify(DeviceObject);
             break;
 
         case IRP_MN_QUERY_STOP_DEVICE:
-            // check if we have a config descriptor
-            if (!dev_ext->usb_config_desc) {
-                // skip the irp
-                IoSkipCurrentIrpStackLocation(Irp);
-
-                // call the next driver
-                status = IofCallDriver(dev_ext->attachedDeviceObject, Irp);
-            }
-            else {
-                dev_ext->is_stopped = true;
-                Irp->IoStatus.Status = status = STATUS_SUCCESS;
-
-                IofCompleteRequest(Irp, IO_NO_INCREMENT);
-            }
-
-            // release the spinlock
-            spinlock_decrement_notify(DeviceObject);
+        case IRP_MN_QUERY_REMOVE_DEVICE:
+            // forward the irp to the next driver. In the 
+            // callback complete routine we will set the 
+            // hold_new_requests/remove_pending flag based on 
+            // the result and release the spinlock
+            status = forward_to_next_driver(
+                dev_ext->attachedDeviceObject, Irp,
+                false, query_complete, (
+                    (stack->MinorFunction == IRP_MN_QUERY_STOP_DEVICE) ? 
+                    reinterpret_cast<void*>(const_cast<bool*>(&dev_ext->hold_new_requests)) : 
+                    reinterpret_cast<void*>(const_cast<bool*>(&dev_ext->remove_pending))
+                )
+            );
             break;
 
         case IRP_MN_CANCEL_STOP_DEVICE:
@@ -870,35 +714,34 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
             // check if we have a config descriptor
             if (!dev_ext->usb_config_desc) {
                 // skip the irp
-                IoSkipCurrentIrpStackLocation(Irp);
+                status = forward_to_next_driver(
+                    dev_ext->attachedDeviceObject, Irp, true
+                );
             }
             else {
                 if (stack->MinorFunction == IRP_MN_CANCEL_STOP_DEVICE) {
-                    dev_ext->is_stopped = false;
+                    dev_ext->hold_new_requests = false;
                 }
                 else if (stack->MinorFunction == IRP_MN_CANCEL_REMOVE_DEVICE) {
-                    dev_ext->is_removing = false;
+                    dev_ext->remove_pending = false;
                 }
 
                 Irp->IoStatus.Status = STATUS_SUCCESS;
 
-                // Forward the IRP to the next driver
-                IoCopyCurrentIrpStackLocationToNext(Irp);
+                // forward the IRP to the next driver
+                status = forward_to_next_driver(dev_ext->attachedDeviceObject, Irp);
             }
 
-            // call the next driver
-            status = IofCallDriver(dev_ext->attachedDeviceObject, Irp);
-
             // release the spinlock
-            spinlock_decrement_notify(DeviceObject);
+            decrement_active_pipe_count_and_notify(DeviceObject);
             break;
 
-        case IRP_MN_EJECT:
+        case IRP_MN_SURPRISE_REMOVAL:
             // release the spinlock
-            spinlock_decrement_notify(DeviceObject);
+            decrement_active_pipe_count_and_notify(DeviceObject);
 
             // mark we are ejecting
-            dev_ext->is_ejecting = true;
+            dev_ext->device_removed = true;
 
             // stop the device
             usb_pipe_abort(DeviceObject);
@@ -906,22 +749,16 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
             // set the irp status to success
             Irp->IoStatus.Status = STATUS_SUCCESS;
 
-            // copy the current irp stack location to the next
-            IoCopyCurrentIrpStackLocationToNext(Irp);
-
-            // call the next driver
-            status = IofCallDriver(dev_ext->attachedDeviceObject, Irp);
+            // forward to the next driver
+            status = forward_to_next_driver(dev_ext->attachedDeviceObject, Irp);
             break;
 
         default:
-            // Forward the IRP to the next driver
-            IoCopyCurrentIrpStackLocationToNext(Irp);
-
-            // call the next driver
-            status = IofCallDriver(dev_ext->attachedDeviceObject, Irp);
+            // forward to the next driver
+            status = forward_to_next_driver(dev_ext->attachedDeviceObject, Irp);
 
             // release the spinlock
-            spinlock_decrement_notify(DeviceObject);
+            decrement_active_pipe_count_and_notify(DeviceObject);
             break;
     }
 
