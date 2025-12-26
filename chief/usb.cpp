@@ -194,7 +194,7 @@ NTSTATUS usb_send_receive_vendor_request(_DEVICE_OBJECT* DeviceObject, usb_chief
         ((receive ? BMREQUEST_DEVICE_TO_HOST : BMREQUEST_HOST_TO_DEVICE) << 7) |
         (BMREQUEST_VENDOR << 5) | BMREQUEST_TO_DEVICE
     );
-    usb.Request = Request->Request & 0xff;
+    usb.Request = Request->request & 0xff;
     usb.Value = Request->value;
     usb.Index = Request->index;
     usb.TransferFlags = (

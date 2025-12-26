@@ -15,7 +15,7 @@ static bool delete_is_not_pending(__in struct _DEVICE_OBJECT *DeviceObject) {
     chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
     
     // return if the device is not being removed or ejected and has a configuration descriptor
-    return !dev_ext->is_ejecting && (dev_ext->usb_config_desc != nullptr) && !dev_ext->is_removing && !dev_ext->hold_new_requests;
+    return !dev_ext->device_removed && (dev_ext->usb_config_desc != nullptr) && !dev_ext->remove_pending && !dev_ext->hold_new_requests;
 }
 
 static NTSTATUS query_complete(PDEVICE_OBJECT DeviceObject, PIRP Irp, PVOID Context) {
@@ -382,12 +382,12 @@ NTSTATUS mj_device_control(__in struct _DEVICE_OBJECT *DeviceObject, __inout str
                 }
                 break;
             case CTL_CODE(FILE_DEVICE_USB, 2, METHOD_BUFFERED, FILE_ANY_ACCESS): // 0x220008
-                status = usb_set_alternate_setting(DeviceObject, dev_ext->usb_config_desc, vendor_request->Request & 0xff);
+                status = usb_set_alternate_setting(DeviceObject, dev_ext->usb_config_desc, vendor_request->request & 0xff);
                 break;
             case CTL_CODE(FILE_DEVICE_USB, 3, METHOD_BUFFERED, FILE_ANY_ACCESS): // 0x22000c
                 if (dev_ext->bcdUSB.has_value()) {
                     // copy the bcdUSB value to the vendor request
-                    vendor_request->Request = dev_ext->bcdUSB.has_value();
+                    vendor_request->request = dev_ext->bcdUSB.has_value();
 
                     // set the length to 2 bytes
                     Irp->IoStatus.Information = 2;
@@ -599,6 +599,7 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
                     status = Irp->IoStatus.Status;
                 }
 
+                // check if the start device was successful on the lower driver
                 if (NT_SUCCESS(status)) {
                     // get the device descriptor
                     USB_DEVICE_DESCRIPTOR device_desc;
@@ -614,7 +615,7 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
                         // try to get the configuration descriptor
                         status = usb_get_configuration_desc(DeviceObject, dev_ext->usb_config_desc);
 
-                        // mark if we have a config descriptor
+                        // check if we can change to the first alternate setting
                         if (NT_SUCCESS(status)) {
                             // set the alternate setting to 0
                             status = usb_set_alternate_setting(DeviceObject, dev_ext->usb_config_desc, 0);
@@ -640,7 +641,7 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
             spinlock_decrement_notify(DeviceObject);
             
             // stop everything that is running
-            dev_ext->is_ejecting = true;
+            dev_ext->device_removed = true;
             usb_pipe_abort(DeviceObject);
 
             // copy the current irp stack location to the next
@@ -696,14 +697,14 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
         case IRP_MN_QUERY_REMOVE_DEVICE:
             // forward the irp to the next driver. In the 
             // callback complete routine we will set the 
-            // hold_new_requests/is_removing flag based on 
+            // hold_new_requests/remove_pending flag based on 
             // the result and release the spinlock
             status = forward_to_next_driver(
                 dev_ext->attachedDeviceObject, Irp,
                 false, query_complete, (
                     (stack->MinorFunction == IRP_MN_QUERY_STOP_DEVICE) ? 
                     reinterpret_cast<void*>(const_cast<bool*>(&dev_ext->hold_new_requests)) : 
-                    reinterpret_cast<void*>(const_cast<bool*>(&dev_ext->is_removing))
+                    reinterpret_cast<void*>(const_cast<bool*>(&dev_ext->remove_pending))
                 )
             );
             break;
@@ -722,7 +723,7 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
                     dev_ext->hold_new_requests = false;
                 }
                 else if (stack->MinorFunction == IRP_MN_CANCEL_REMOVE_DEVICE) {
-                    dev_ext->is_removing = false;
+                    dev_ext->remove_pending = false;
                 }
 
                 Irp->IoStatus.Status = STATUS_SUCCESS;
@@ -740,7 +741,7 @@ NTSTATUS mj_pnp(__in struct _DEVICE_OBJECT *DeviceObject, __inout struct _IRP *I
             spinlock_decrement_notify(DeviceObject);
 
             // mark we are ejecting
-            dev_ext->is_ejecting = true;
+            dev_ext->device_removed = true;
 
             // stop the device
             usb_pipe_abort(DeviceObject);
