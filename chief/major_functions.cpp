@@ -545,14 +545,11 @@ NTSTATUS mj_system_control(__in struct _DEVICE_OBJECT *DeviceObject, __inout str
     // aquire the spinlock
     spinlock_increment(DeviceObject);
 
-    // copy the current irp stack location to the next
-    IoCopyCurrentIrpStackLocationToNext(Irp);
+    // get the device extension
+    chief_device_extension* dev_ext = reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension);
 
     // call the next driver
-    const NTSTATUS status = IoCallDriver(
-        reinterpret_cast<chief_device_extension*>(DeviceObject->DeviceExtension)->attachedDeviceObject,
-        Irp
-    );
+    const NTSTATUS status = forward_to_next_driver(dev_ext->attachedDeviceObject, Irp);
 
     // release the spinlock
     spinlock_decrement_notify(DeviceObject);
