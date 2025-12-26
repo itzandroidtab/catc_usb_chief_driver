@@ -66,7 +66,6 @@ NTSTATUS add_chief_device(PDRIVER_OBJECT driver_object, PDEVICE_OBJECT& device_o
 
     // initalize the events
     KeInitializeEvent(&dev_ext->pipe_count_empty, NotificationEvent, FALSE);
-    KeInitializeEvent(&dev_ext->event1, NotificationEvent, FALSE);
 
     // initialize spinlocks
     KeInitializeSpinLock(&dev_ext->device_lock);

@@ -28,7 +28,6 @@ struct chief_device_extension {
   PUSBD_INTERFACE_INFORMATION usb_interface_info;
   DEVICE_CAPABILITIES device_capabilities;
   KEVENT pipe_count_empty;
-  KEVENT event1;
   KSPIN_LOCK device_lock;
   LONG pipe_open_count;
   bool *allocated_pipes;

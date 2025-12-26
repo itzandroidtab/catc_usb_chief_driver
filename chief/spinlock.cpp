@@ -32,9 +32,6 @@ LONG spinlock_decrement_notify(PDEVICE_OBJECT DeviceObject) {
         case 0:
             KeSetEvent(&dev_ext->pipe_count_empty, EVENT_INCREMENT, false);
             break;
-        case 1:
-            KeSetEvent(&dev_ext->event1, EVENT_INCREMENT, false);
-            break;
         default:
             // do nothing on the default case
             break;
