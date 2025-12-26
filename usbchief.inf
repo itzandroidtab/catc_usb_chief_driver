@@ -10,7 +10,7 @@ Signature   = "$Windows NT$"
 Class       = USB
 ClassGuid   = {36fc9e60-c465-11cf-8056-444553540000} 
 Provider    = %MfgName%
-DriverVer   = 12/23/2025,1.0.2.0
+DriverVer   = 12/23/2025,1.0.2.1
 CatalogFile.NTamd64 = usbchief.cat
 
 [SourceDisksNames]
